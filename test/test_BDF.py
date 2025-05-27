@@ -13,13 +13,13 @@ class TestBDF(unittest.TestCase):
 
     def test_readAndWriteXYZ(self):
         path = Path("testR&W.xyz")
-        xyz = np.random.random((12, 3))
+        xyz_bohr = np.random.random((12, 3))
         atoms = ["C", "C", "C", "C", "C", "C", "H", "H", "H", "H", "H", "H"]
-        # write in Bohr, read in Angstrom, manually convert unit
-        O1NumHess_QC._writeXYZ(xyz, atoms, path, useBohr=True)
-        _, xyz_, atoms_ = O1NumHess_QC._readXYZ(path, unit="angstrom")
-        np.testing.assert_array_almost_equal(xyz_ * O1NumHess_QC.bohr2angstrom, xyz)
-        self.assertListEqual(atoms, list(atoms_))
+        # write in Bohr, read in Angstrom and been converted to bohr, manually convert unit
+        O1NumHess_QC._writeXYZ(xyz_bohr, atoms, path, useBohr=True)
+        _, xyz_bohr_, _atoms = O1NumHess_QC._readXYZ(path, unit="angstrom")
+        np.testing.assert_array_almost_equal(xyz_bohr_ * O1NumHess_QC.bohr2angstrom, xyz_bohr)
+        self.assertListEqual(atoms, list(_atoms))
         os.remove(path)
 
     def test_BDF(self):
@@ -94,7 +94,7 @@ class TestBDF(unittest.TestCase):
             ])
 
             index = 0
-            grad = qc._calcGrad_BDF(qc.xyz_angstrom, index, 4, "4G", test_inp)
+            grad = qc._calcGrad_BDF(qc.xyz_bohr, index, 4, "4G", test_inp)
             eng, _ = qc._readEgrad1(test_dir / f"test_{index:02}.egrad1")
             self.assertAlmostEqual(eng_, eng)
             np.testing.assert_array_almost_equal(grad_.reshape((grad_.size,)), grad)

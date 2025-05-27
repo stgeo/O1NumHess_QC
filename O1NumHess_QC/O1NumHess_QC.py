@@ -19,7 +19,7 @@ class O1NumHess_QC:
         encoding: str = "utf-8",
     ):
         # read the XYZ file, get path, coordinates and atoms
-        self.xyz_path, self.xyz_angstrom, self.atoms = self._readXYZ(xyz_path, encoding, unit)
+        self.xyz_path, self.xyz_bohr, self.atoms = self._readXYZ(xyz_path, encoding, unit)
 
     @staticmethod
     def _readXYZ(
@@ -30,7 +30,7 @@ class O1NumHess_QC:
         """
         Read atomic coordinates from an XYZ file into a numpy array.
 
-        Return filepath, coordinates, atoms. Coordinates are in Angstrom!
+        Return filepath, coordinates, atoms. Coordinates are in Bohr!
 
         There must be **only one** molecule in the file!
 
@@ -44,9 +44,9 @@ class O1NumHess_QC:
         # unit
         if unit.casefold() not in ["angstrom".casefold(), "bohr".casefold()]:
             raise ValueError(f"unit must be 'angstrom' or 'bohr' (case insensitive)")
-        useBohr = False
+        isBohr = False
         if unit.casefold() == "bohr".casefold():
-            useBohr = True
+            isBohr = True
 
         # handle path
         path = Path(path).absolute() # make path absolute
@@ -72,8 +72,8 @@ class O1NumHess_QC:
             raise ValueError("Could not parse XYZ file, the file may be incorrect")
         assert coordinates.shape == (n_atoms, 3), f"the coordinates shape {coordinates.shape} is incorrect"
 
-        if useBohr:
-            coordinates = coordinates * O1NumHess_QC.bohr2angstrom
+        if not isBohr:
+            coordinates = coordinates * O1NumHess_QC.angstrom2bohr
         return path, coordinates, atoms
 
     @staticmethod
@@ -97,15 +97,14 @@ class O1NumHess_QC:
             raise ValueError(f"Could not parse BDF output .egrad1 file: {egrad1_path}")
 
     @staticmethod
-    def _writeXYZ(x_angstrom: np.ndarray, atoms: Sequence[str], path: Path, useBohr: bool=False, comment: str = "", encoding: str = "utf-8"):
-        assert x_angstrom.shape == (x_angstrom.size // 3, 3) and x_angstrom.shape[0] == len(atoms)
-        if useBohr:
-            x_angstrom = x_angstrom * O1NumHess_QC.angstrom2bohr
+    def _writeXYZ(xyz_bohr: np.ndarray, atoms: Sequence[str], path: Path, useBohr: bool=False, comment: str = "", encoding: str = "utf-8"):
+        assert xyz_bohr.shape == (xyz_bohr.size // 3, 3) and xyz_bohr.shape[0] == len(atoms)
+        xyz_out = xyz_bohr if useBohr else xyz_bohr * O1NumHess_QC.bohr2angstrom
         xyz_str = f"{len(atoms)}\n" + \
             comment.strip() + "\n" + \
             "\n".join([
                 f"{atom:<3}{x:>26.13f}{y:>26.13f}{z:>26.13f}"
-                for atom, (x, y, z) in zip(atoms, x_angstrom)]
+                for atom, (x, y, z) in zip(atoms, xyz_out)]
             ) + \
             "\n"
         path.write_text(xyz_str, encoding)
@@ -140,7 +139,7 @@ class O1NumHess_QC:
             os.makedirs(tempdir, exist_ok=True)
 
         # ========== initialize o1nh
-        x = self.xyz_angstrom.reshape((self.xyz_angstrom.size,))
+        x = self.xyz_bohr.reshape((self.xyz_bohr.size,))
         o1nh = O1NumHess(
             x,
             self._calcGrad_BDF,
@@ -163,7 +162,7 @@ class O1NumHess_QC:
 
     def _calcGrad_BDF(
         self,
-        x: np.ndarray,
+        x_bohr: np.ndarray,
         index: int,
         core: int,
         mem: str, # "1G"
@@ -196,12 +195,12 @@ class O1NumHess_QC:
             os.makedirs(tempdir, exist_ok=True)
 
         # ========== make sure the input x is valid
-        x = np.array(x)
-        assert x.size == self.xyz_angstrom.size, f"the input size of x is {x.size}, different with the initial molecular size {self.xyz_angstrom.size}"
+        x_bohr = np.array(x_bohr)
+        assert x_bohr.size == self.xyz_bohr.size, f"the input size of x is {x_bohr.size}, different with the initial molecular size {self.xyz_bohr.size}"
 
         # ========== generate filename for BDF files
         # print(Path("."))
-        suffix = str(index).zfill(len(str(x.size * 2))) # use index and x.size to generate a suffix with proper length
+        suffix = str(index).zfill(len(str(x_bohr.size * 2))) # use index and x.size to generate a suffix with proper length
         task_name = task_name if task_name else inp.stem
         task_name = f"{task_name}_{suffix}"
         xyz_out_path = Path(f"{task_name}.xyz").absolute()
@@ -246,7 +245,7 @@ class O1NumHess_QC:
         inp_out_path.write_text("\n".join(inp_str), encoding)
 
         # ========== generate new .xyz file for BDF
-        self._writeXYZ(x.reshape(x.size // 3, 3), self.atoms, xyz_out_path, useBohr, encoding=encoding)
+        self._writeXYZ(x_bohr.reshape(x_bohr.size // 3, 3), self.atoms, xyz_out_path, useBohr, encoding=encoding)
 
         # ========== generate new .sh file to run BDF
         sh_out_path.write_text(config["bash"] + \
@@ -265,5 +264,5 @@ class O1NumHess_QC:
 
         # ========== read result
         _, grad = self._readEgrad1(egrad1_in_path, encoding)
-        assert grad.shape == self.xyz_angstrom.shape, f"the grad shape from BDF output .egrad1 file: {egrad1_in_path} is {grad.shape}, different with the initial molecular shape {self.xyz_angstrom.shape}"
-        return grad.reshape((self.xyz_angstrom.size,))
+        assert grad.shape == self.xyz_bohr.shape, f"the grad shape from BDF output .egrad1 file: {egrad1_in_path} is {grad.shape}, different with the initial molecular shape {self.xyz_bohr.shape}"
+        return grad.reshape((self.xyz_bohr.size,))
