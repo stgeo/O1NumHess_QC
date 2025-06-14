@@ -21,6 +21,10 @@ class O1NumHess_QC:
         # read the XYZ file, get path, coordinates and atoms
         self.xyz_path, self.xyz_bohr, self.atoms = self._readXYZ(xyz_path, encoding, unit)
 
+    @property
+    def xyz_angstrom(self) -> np.ndarray:
+        return self.xyz_bohr * O1NumHess_QC.bohr2angstrom
+
     @staticmethod
     def _readXYZ(
         path: Union[str, Path],
@@ -104,7 +108,7 @@ class O1NumHess_QC:
             comment.strip() + "\n" + \
             "\n".join([
                 f"{atom:<3}{x:>26.13f}{y:>26.13f}{z:>26.13f}"
-                for atom, (x, y, z) in zip(atoms, xyz_out)]
+                for atom, (x, y, z) in zip(atoms, xyz_out)] # type: ignore
             ) + \
             "\n"
         path.write_text(xyz_str, encoding)
