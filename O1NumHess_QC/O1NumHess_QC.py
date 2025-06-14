@@ -85,7 +85,7 @@ class O1NumHess_QC:
         """
         read energy and gradient from BDF output .egrad1 file.
 
-        TODO 备注：补上BDF的输出单位
+        TODO 备注：BDF的输出单位
         """
         egrad1_path = Path(egrad1_path)
         if not egrad1_path.exists():
@@ -171,19 +171,20 @@ class O1NumHess_QC:
         core: int,
         mem: str, # "1G"
         inp: Union[str, Path], # TODO 备注：inp文件内部必须在“Geometry”块中包含file=xxx.xyz的写法，否则报错
-        # unit: str = "angstrom", # TODO 备注：单位直接从inp文件读取，无需传入
         encoding: str = "utf-8",
         tempdir: Union[str, Path] = "~/tmp",
         task_name: str = "", # TODO 备注：BDF的输入文件名（因为BDF的运行需要xyz和inp文件，但是两个文件的文件名可能不一致），如果未设置统一以inp的文件名做为任务名
         config_name: str = "", # TODO 备注：BDF的配置文件名，如果不写，则以第一个配置文件为准，如果没有配置文件，报错
     ) -> np.ndarray:
         """
-        TODO 备注：给定扰动后的x，（由于输入给o1nh的单位一定是angstrom，所以扰动回来的单位一定是angstrom）
-        读取优化后的原始xyz字符串，生成新的坐标XYZ文件
-        参数文件，调用BDF计算梯度并读取结果
-        给定的输入文件不要求在当前路径下
-        TODO 备注：output to specified folder (not supported by BDF now) 受BDF限制，输出路径只能在当前文件夹
-        TODO 备注：输出的单位一定是Bohr，输出的形状是一维向量
+        调用BDF计算一次梯度并读取结果
+
+        给定扰动后的x，（采用bohr作为单位），生成新的坐标XYZ文件
+        给定BDF计算的参数文件inp，（不要求在当前工作路径下），从中读取计算时采用的单位和参数，生成新的配置文件
+        生成调用BDF的.sh文件，并执行，执行完毕后读取.egrad1文件提取梯度
+
+        output to specified folder (not supported by BDF now) 受BDF限制，输出路径只能在当前文件夹
+        输出的梯度单位一定是Bohr，输出的形状是一维向量
         """
         # ========== check params
         config = getConfig("BDF", config_name)
@@ -267,6 +268,6 @@ class O1NumHess_QC:
         os.system(f"bash {sh_out_path}")
 
         # ========== read result
-        _, grad = self._readEgrad1(egrad1_in_path, encoding)
+        _, grad = self._readEgrad1(egrad1_in_path)
         assert grad.shape == self.xyz_bohr.shape, f"the grad shape from BDF output .egrad1 file: {egrad1_in_path} is {grad.shape}, different with the initial molecular shape {self.xyz_bohr.shape}"
         return grad.reshape((self.xyz_bohr.size,))

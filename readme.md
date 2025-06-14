@@ -1,5 +1,9 @@
 # O1NumHess_QC
 
+这是一个量子化学计算相关的Python库。本模块借助O1NumHess库和Numpy，通过指定`.xyz`分子坐标文件和相应的输入文件来完成对BDF和ORCA的调用，计算得到分子的Hessian矩阵。
+
+<!-- TODO 其他软件 -->
+
 ## requirement
 
 * python >= 3.6
@@ -75,10 +79,7 @@ test files:
     # qc = O1NumHess_QC("../benzene.xyz", unit="angstrom")  # specify the unit of xyz file manually
     # print(qc.xyz_angstrom)
 
-    # calculate gradient once
-    # qc._calcGrad_BDF(qc.xyz_angstrom, index=0, core=4, mem="4G", inp="../benzene.inp", tempdir = "~/tmp", task_name="abc")
-
-    # parallel
+    # parallel calculate Hessian
     hessian: np.ndarray = qc.calcHessian_BDF(
         method = "single",
         delta = 1e-3,
@@ -87,7 +88,7 @@ test files:
         inp = "../benzene.inp",
         encoding = "utf-8",
         tempdir = "~/tmp",      # BDF tempdir, each calculate will generate a subfolder at there
-        task_name = "ddd",      # all the output file will start with this string
+        task_name = "abc",      # all the output file will start with this string
         config_name = "",       # config name in your ~/.O1NumHess_QC folder config file
     )
     print(hessian)
