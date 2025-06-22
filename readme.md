@@ -1,22 +1,37 @@
 # O1NumHess_QC
 
-这是一个量子化学计算相关的Python库。本模块借助O1NumHess库和Numpy，通过指定`.xyz`分子坐标文件和相应的输入文件来完成对BDF和ORCA的调用，计算得到分子的Hessian矩阵。
+这是一个量子化学计算相关的Python库。本模块对接了BDF，ORCA等化学软件以及O1NumHess库，实现了调用BDF等软件在仅需计算$O(1)$个梯度的情况下计算得到Hessian矩阵的功能。
 
-<!-- TODO 其他软件 -->
+用户通过指定`.xyz`分子坐标文件和相应的计算梯度的输入文件，来计算得到分子的Hessian矩阵。
+
+<!-- TODO 其他软件 O1的复杂度 -->
 
 ## requirement
 
+* Linux System
 * python >= 3.6
 * numpy
 * O1NumHess
 
-## usage
+注：O1NumHess是一个能够在计算$O(1)$个梯度的复杂度下实现Hessian计算的Python库。
+
+<!-- TODO link -->
+
+## install
 
 ```bash
 python3 setup.py install
 ```
 
 this will create config files in `~/.O1NumHess_QC`, copy the files `xxx_config_example.py` to `xxx_config.py` and modify it with your own condition.
+
+## example
+
+Detailed concept and instruction can be found in the documentation.
+
+<!-- TODO documentation link -->
+
+Here is an example shows how to use O1NumHess_QC and BDF to calculate Hessian.
 
 test files:
 

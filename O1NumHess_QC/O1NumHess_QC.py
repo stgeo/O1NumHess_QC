@@ -64,8 +64,7 @@ class O1NumHess_QC:
             n_atoms = int(lines[0])
         except ValueError:
             raise ValueError("First line of XYZ file must contain the number of atoms")
-        # Check if the file contains only one molecule
-        # TODO 备注：确保只有一个分子，多了报错
+        # Check if the file contains **only one** molecule
         assert len(lines) == n_atoms + 2, "lines not match, XYZ file is incorrect or contains more than one molecule"
 
         # Extract coordinates (skip the first two lines)
@@ -131,7 +130,7 @@ class O1NumHess_QC:
         """
         # ========== check params
         config = getConfig("BDF", config_name)
-        assert 0 < core and isinstance(core, int) # <= os.cpu_count()
+        assert 0 < core <= os.cpu_count() and isinstance(core, int) # type: ignore
         inp = Path(inp).absolute()
         if not inp.is_file():
             raise FileNotFoundError(f"input .inp file: {inp} not exists or not a file")
