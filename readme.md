@@ -1,8 +1,10 @@
 # O1NumHess_QC
 
-这是一个量子化学计算相关的Python库。本模块对接了BDF，ORCA等化学软件以及O1NumHess库，实现了调用BDF等软件在仅需计算$O(1)$个梯度的情况下计算得到Hessian矩阵的功能。
+ This is a Python library related to quantum chemistry calculations. This module interfaces with chemical software such as BDF, ORCA, etc., as well as the O1NumHess library, implementing the functionality to calculate the Hessian matrix by only needing to calculate gradients O(1) times when calling chemical software like BDF.
 
-用户通过指定`.xyz`分子坐标文件和相应的计算梯度的输入文件，来计算得到分子的Hessian矩阵。
+Users can calculate the Hessian matrix of molecules by specifying the `.xyz` molecular coordinate file and the corresponding input file for gradient calculations.
+
+O1NumHess is unrelated to quantum chemistry and calculates the Hessian matrix by accepting a vector x and a user-provided gradient function g. O1NumHess perturbs each component of the input vector x separately, calls function g to calculate the gradient after each perturbation, and finally uses the gradients calculated from multiple perturbations to derive the Hessian.
 
 <!-- TODO 其他软件 O1的复杂度 -->
 
@@ -12,8 +14,6 @@
 * python >= 3.6
 * numpy
 * O1NumHess
-
-注：O1NumHess是一个能够在计算$O(1)$个梯度的复杂度下实现Hessian计算的Python库。
 
 <!-- TODO link -->
 

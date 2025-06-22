@@ -249,7 +249,7 @@ class O1NumHess_QC:
         inp_out_path.write_text("\n".join(inp_str), encoding)
 
         # ========== generate new .xyz file for BDF
-        self._writeXYZ(x_bohr.reshape(x_bohr.size // 3, 3), self.atoms, xyz_out_path, useBohr, encoding=encoding)
+        self._writeXYZ(x_bohr.reshape(x_bohr.size // 3, 3), self.atoms, xyz_out_path, useBohr)
 
         # ========== generate new .sh file to run BDF
         sh_out_path.write_text(config["bash"] + \
