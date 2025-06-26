@@ -154,6 +154,7 @@ hessian = qc.calcHessian_BDF(
     delta = 1e-3,
     core = 4,
     mem = "4G",
+    total_cores = 8,
     inp = "../benzene.inp",
     encoding = "utf-8",
     tempdir = "~/tmp",
@@ -171,6 +172,10 @@ hessian = qc.calcHessian_BDF(
   * `mem` is the maximum memory size used by **each thread** when calling BDF to calculate a single gradient, corresponding to the environment variable `OMP_STACKSIZE` set when running BDF. The type is str, for example `"4G"` or `"4096M"`
   * For example, when `os.cpu_count()` reads that the current system has 8 cores and `core = 4, mem = "4G"`, O1NH will calculate 2 gradients simultaneously. Each gradient calculation tells BDF to use 4 cores, with each core using at most 4G memory, so at most 32G memory will be used
   * For details, see [Installation and Operation](https://bdf-manual.readthedocs.io/en/latest/Installation.html#run-bdf-standalone-and-execute-the-job-with-a-shell-script).
+* `total_cores`: (**important**) The total number of cores to be used for the current computing task, None (default) or int type. (This parameter is passed directly to `O1NumHess`, and the following explanation is the internal logic of O1NH)
+  * In some cases, not all cores of the current computer can be used to calculate. For example, on a server, users may only be able to use a portion of the cores, or some cores are executing other tasks. This parameter is used to set the total number of cores to be used for this task in such situations.
+  * This value must be less than or equal to the maximum number of cores in the current system obtained by `os.cpu_count()`; when set to None, the result obtained by `os.cpu_count()` is used by default
+  * If either this value or `os.cpu_count()` does not exist or cannot be obtained, a warning will be generated (`os.cpu_count()` may not be able to get a result and return None); if both do not exist, an error will be raised
 * `inp`: (**important**) Input file for calling BDF to calculate gradients
   * Users should specify the input information for calling BDF to calculate a single gradient in this file. All gradients will be calculated based on this input file.
   * In this file, the molecular coordinates to be calculated should be written in the format `file=xxx.xyz`. Refer to the examples in `readme.md` or the official documentation [Input and output formats](https://bdf-manual.readthedocs.io/en/latest/Input%20and%20Output.html#read-the-molecular-coordinates-from-the-specified-file).
@@ -186,10 +191,11 @@ hessian = qc.calcHessian_BDF(
   * If this parameter is empty, the first configuration found in the configuration file will be used by default
   * The purpose of this parameter is: if users have multiple BDF versions or multiple running configurations, they can write multiple configurations in the configuration file and specify the specific configuration to be used for each task.
 
-Assuming the current system has 8 cores and 32G memory, the complete explanation and corresponding output for the above code are:
+Assuming the current system has a total of 16 cores and 64GB memory, the complete explanation and corresponding output for the above code are:
 
 * QC will provide O1NH with the molecular coordinates as x, the function that calls BDF to calculate molecular gradients as g, and other parameters needed for BDF calculations during initialization
-* O1NH will calculate multiple gradients simultaneously using the `single` method based on the provided parameters. When calculating each gradient, it perturbs the corresponding component in the molecular coordinates and calls the gradient function g provided by QC with parameters. Since there are 8 cores and each gradient calculation uses 4 cores with each core using at most 4G memory, two gradient calculations will be started simultaneously, using at most 32G memory.
+* O1NH will calculate multiple gradients simultaneously using the `single` method based on the provided parameters. When calculating each gradient, it perturbs the corresponding component in the molecular coordinates and calls the gradient function g provided by QC with parameters.
+* Since the parameter `total_cores = 8`, 8 of 16 cores will be used for computation. Since the parameter `core = 4, mem = "4G"`, each gradient calculation uses 4 cores with each core using at most 4G memory, 2 gradient calculations will be started simultaneously, using at most 32G memory of 64G.
 * The following introduces the process of calculating the first gradient as an example:
 * When calculating the first gradient, gradient function g will generate 3 files for calling BDF in the **current working directory** based on task_name `abc`: `abc_001.xyz`, `abc_001.inp`, `abc_001.sh`
   * For `abc_001.inp`, function g will read the input file `"../benzene.inp"` using `"utf-8"` encoding as specified by the `encoding` parameter to ensure correct reading when the file contains comments. After reading, it finds the molecular coordinate section and changes the filename in the `file=xxx.xyz` part to `abc_001.xyz`, thus generating `abc_001.inp`
@@ -220,8 +226,8 @@ QC contains two functions: `calcHessian_BDF` and `_calcGrad_BDF`. `calcHessian_B
   * Molecular coordinates as x
   * The `_calcGrad_BDF` function as gradient function g
   * Other parameters needed when function g calls BDF for calculation (O1NH will then pass these parameters back to `_calcGrad_BDF`)
-* It then calls `O1NumHess` to complete the Hessian calculation according to the user's chosen order of finite difference such as `single` or `double`. The `core` parameter for the number of cores and the `delta` parameter for molecular perturbation need to be passed separately when calling the specific calculation method (see code)
-* O1NH will continuously perturb the molecular coordinates x using `delta`. Each perturbation corresponds to one gradient calculation, which is one call to function g. When calling function g, the actual number of cores `core` passed to function g may be adjusted according to the situation to achieve maximum computational efficiency
+* It then calls the corresponding function in `O1NumHess` to complete the Hessian calculation according to the user's chosen order of finite difference such as `single` or `double`. The `delta` parameter for molecular perturbation, `core` and `total_cores` parameter for the number of cores to be used need to be passed separately when calling the specific calculation function (see code)
+* O1NH will continuously perturb the molecular coordinates x using `delta`. Each perturbation corresponds to one gradient calculation, which is one call to function g. When calling function g, the actual number of cores `core` passed to function g may be adjusted by O1NH according to the situation to achieve maximum computational efficiency
 * `_calcGrad_BDF` is the gradient function g that calls BDF to calculate gradients. It accepts the molecular coordinates x perturbed by O1NH, a counter `index`, and other parameters needed from O1NH (they were provided to O1NH during O1NH initialization), thereby performing gradient calculations
 * `_calcGrad_BDF` will generate the three files `.inp`, `.xyz`, `.sh` required for BDF gradient calculation based on the received parameters and call BDF for execution (the detailed process has been introduced in "Usage"). Finally, it reads the `.egrad1` file from BDF's output results to obtain the gradient and returns it to O1NH
 * After O1NH receives all the calculated gradients, it calculates the Hessian, and the entire process is complete.
