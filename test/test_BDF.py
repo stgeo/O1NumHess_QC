@@ -8,11 +8,21 @@ from O1NumHess_QC import O1NumHess_QC
 
 
 class TestBDF(unittest.TestCase):
+    def setUp(self):
+        print("\n" + "="*50)
+        print(f"Starting test: {self._testMethodName}")
+        print("="*50)
+
+    def tearDown(self):
+        print("-"*50)
+        print(f"Finished test: {self._testMethodName}")
+        print("-"*50 + "\n")
+
     def test_unitConvert(self):
         self.assertAlmostEqual(O1NumHess_QC.bohr2angstrom * O1NumHess_QC.angstrom2bohr, 1)
 
     def test_readAndWriteXYZ(self):
-        path = Path("testR&W.xyz")
+        path = Path("_testR&W.xyz")
         xyz_bohr = np.random.random((12, 3))
         atoms = ["C", "C", "C", "C", "C", "C", "H", "H", "H", "H", "H", "H"]
         # write in Bohr, read in Angstrom and been converted to bohr, manually convert unit
@@ -22,57 +32,28 @@ class TestBDF(unittest.TestCase):
         self.assertListEqual(atoms, list(_atoms))
         os.remove(path)
 
+    def test_total_cores(self):
+        xyz = self._generateXYZ("_test_total_cores.xyz")
+        inp = self._generateInp("_test_total_cores.inp", xyz)
+        qc = O1NumHess_QC(xyz)
+
+        with self.assertRaises(ValueError):
+            qc.calcHessian_BDF("single", 1e-3, core=2, mem="2G", total_cores=999, inp=inp)
+        with self.assertRaises(ValueError):
+            qc.calcHessian_BDF("single", 1e-3, core=2, mem="2G", total_cores=-1, inp=inp)
+        # with self.assertWarns(RuntimeWarning):
+        #     qc.calcHessian_BDF("single", 1e-3, core=2, mem="2G", total_cores=None, inp=inp)
+        with self.assertRaises(TypeError):
+            qc.calcHessian_BDF("single", 1e-3, core=2, mem="2G", total_cores=1.2, inp=inp) # type: ignore
+        os.remove(xyz)
+
     def test_BDF(self):
         cur_dir = Path(".").absolute()
-        test_dir = Path("./test_BDF").absolute()
+        test_dir = Path("./_test_BDF").absolute()
         os.makedirs(test_dir, exist_ok=True)
 
-        test_xyz = Path("test.xyz").absolute()
-        test_xyz.write_text(dedent("""
-            12
-
-            C         -0.26396        0.29101        0.87006
-            C         -0.72047       -0.95180        0.41795
-            C          0.12718       -2.06420        0.45530
-            C          1.43129       -1.93382        0.94486
-            C          1.88770       -0.69106        1.39714
-            C          1.04011        0.42134        1.35968
-            H         -0.91966        1.15163        0.84107
-            H          1.39331        1.38276        1.70952
-            H          2.89652       -0.59018        1.77601
-            H          2.08713       -2.79433        0.97377
-            H         -1.72939       -1.05266        0.03928
-            H         -0.22596       -3.02564        0.10546
-            """).lstrip()
-        )
-        test_inp = Path("test.inp").absolute()
-        test_inp.write_text(dedent(f"""
-            $COMPASS
-            Title
-            benzene grad
-            Basis
-            cc-pvdz
-            Geometry
-            file={test_xyz.name}
-            End geometry
-            $END
-
-            $xuanyuan
-            $end
-
-            $scf
-            RKS
-            dft
-            B3LYP
-            spinmulti
-            1
-            $end
-
-            $resp
-            geom
-            $end
-            """).strip()
-        )
+        test_xyz = self._generateXYZ("test.xyz")
+        test_inp = self._generateInp("test.inp", test_xyz)
 
         try:
             os.chdir(test_dir)
@@ -103,6 +84,57 @@ class TestBDF(unittest.TestCase):
             os.remove(test_xyz)
             os.remove(test_inp)
             shutil.rmtree(test_dir)
+
+    def _generateInp(self, path, xyz):
+        test_inp = Path(path).absolute()
+        test_inp.write_text(dedent(f"""
+            $COMPASS
+            Title
+            benzene grad
+            Basis
+            cc-pvdz
+            Geometry
+            file={xyz.name}
+            End geometry
+            $END
+            $xuanyuan
+            $end
+            $scf
+            RKS
+            dft
+            B3LYP
+            spinmulti
+            1
+            $end
+            $resp
+            geom
+            $end
+            """).strip()
+        )
+
+        return test_inp
+
+    def _generateXYZ(self, path):
+        test_xyz = Path(path).absolute()
+        test_xyz.write_text(dedent("""
+            12
+
+            C         -0.26396        0.29101        0.87006
+            C         -0.72047       -0.95180        0.41795
+            C          0.12718       -2.06420        0.45530
+            C          1.43129       -1.93382        0.94486
+            C          1.88770       -0.69106        1.39714
+            C          1.04011        0.42134        1.35968
+            H         -0.91966        1.15163        0.84107
+            H          1.39331        1.38276        1.70952
+            H          2.89652       -0.59018        1.77601
+            H          2.08713       -2.79433        0.97377
+            H         -1.72939       -1.05266        0.03928
+            H         -0.22596       -3.02564        0.10546
+            """).lstrip()
+        )
+
+        return test_xyz
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,7 +47,7 @@ class O1NumHess_QC:
         """
         # unit
         if unit.casefold() not in ["angstrom".casefold(), "bohr".casefold()]:
-            raise ValueError(f"unit must be 'angstrom' or 'bohr' (case insensitive)")
+            raise ValueError(f"unit must be 'angstrom' or 'bohr' (case insensitive), '{unit}' is given")
         isBohr = False
         if unit.casefold() == "bohr".casefold():
             isBohr = True
@@ -118,8 +118,8 @@ class O1NumHess_QC:
         delta: float,
         core: int,
         mem: str,
-        inp: Union[str, Path],
-        # unit: str = "angstrom",
+        total_cores: Union[int, None] = None,
+        inp: Union[str, Path] = ...,
         encoding: str = "utf-8",
         tempdir: Union[Path, str] = "~/tmp",
         task_name: str = "",
@@ -148,7 +148,6 @@ class O1NumHess_QC:
             self._calcGrad_BDF,
             mem=mem,
             inp=inp,
-            # unit=unit,
             encoding=encoding,
             tempdir=tempdir,
             task_name=task_name,
@@ -156,9 +155,9 @@ class O1NumHess_QC:
         )
         # ========== use o1nh to calculate hessian
         if method.casefold() == "single".casefold():
-            self.hessian = o1nh.singleSide(core, delta)
+            self.hessian = o1nh.singleSide(delta=delta, core=core, total_cores=total_cores)
         elif method.casefold() == "double".casefold():
-            self.hessian = o1nh.doubleSide(core, delta)
+            self.hessian = o1nh.doubleSide(delta=delta, core=core, total_cores=total_cores)
         else:
             raise ValueError(f"method {method} is not supported, only supported 'single' and 'double'")
         return self.hessian
