@@ -25,6 +25,12 @@ python3 setup.py install
 
 this will create config files in `~/.O1NumHess_QC`, copy the files `xxx_config_example.py` to `xxx_config.py` and modify it with your own condition.
 
+Note that the above command installs the package for all users, and requires root privileges. If the user does not have access to root privileges, or if it is not desired to install the package for all users, then one should use the following command instead:
+
+```bash
+python3 setup.py install --prefix ~/.local
+```
+
 ## example
 
 Detailed concept and instruction can be found in the documentation.
