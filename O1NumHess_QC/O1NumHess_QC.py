@@ -5,26 +5,73 @@ from typing import List, Sequence, Tuple, Union
 from pathlib import Path
 import os
 import re
+import time
 
 from O1NumHess import O1NumHess
-from .utils import getConfig
+from .utils import *
 
 class O1NumHess_QC:
-    bohr2angstrom = 0.529177249
-    angstrom2bohr = 1.8897259886
 
     def __init__(
         self,
         xyz_path: Union[str, Path],
         unit: str = "angstrom",
         encoding: str = "utf-8",
+        verbosity: int = 0,
     ):
+        self.verbosity = verbosity
         # read the XYZ file, get path, coordinates and atoms
         self.xyz_path, self.xyz_bohr, self.atoms = self._readXYZ(xyz_path, encoding, unit)
+        if self.verbosity > 1:
+            print("Successfully read coordinates from %s"%path)
+            print("Atomic coordinates in Bohr:")
+            for iatom in range(self.atoms.size):
+                print("%5s %20.12f %20.12f %20.12f"%(self.atoms[iatom], self.xyz_bohr[iatom,0], \
+                    self.xyz_bohr[iatom,1], self.xyz_bohr[iatom,2]))
+
+        # generate atomic numbers, for future use
+        self.atomic_num = self._atoms2AtomicNum(self.atoms)
+
+    def setVerbosity(self, verbosity: int):
+        self.verbosity = verbosity
 
     @property
     def xyz_angstrom(self) -> np.ndarray:
-        return self.xyz_bohr * O1NumHess_QC.bohr2angstrom
+        return self.xyz_bohr * bohr2angstrom
+
+    @property
+    def _effDistMat(self) -> np.ndarray:
+        """
+        Effective distance matrix.
+        Output: distmat(np.ndarray, dimensions(3*self.atoms.size,3*self.atoms.size))
+                The nine elements distmat([3*i:3*i+2,3*j:3*j+2]) are the same;
+                They are the distance between atoms i and j (Bohr) minus the sum of
+                their vdW radii
+        """
+        N = len(self.atoms)
+        distmat = np.zeros([3*N,3*N])
+        for i in range(N):
+            for j in range(i,N):
+                R = bond(self.xyz_bohr,i,j) - vdw_radii[self.atomic_num[i]] - vdw_radii[self.atomic_num[j]]
+                distmat[3*i:3*i+3,3*j:3*j+3] = R
+                distmat[3*j:3*j+3,3*i:3*i+3] = R
+        return distmat
+
+    @staticmethod
+    def _atoms2AtomicNum(atoms: Tuple[str, ...]) -> np.array:
+        """
+        Convert an array of element names to an array of atomic numbers.
+        Input: atoms (tuple, dimension (N), element names)
+        Output: atomic_num (np.array, dimension (N), atomic numbers)
+        """
+        N = len(atoms)
+        atomic_num = np.zeros(N, dtype=int)
+        for i in range(N):
+            try:
+                atomic_num[i] = periodic_table.index(atoms[i].capitalize())
+            except (IndexError, ValueError):
+                raise ValueError("Unsupported element: %s"%atoms[i])
+        return atomic_num
 
     @staticmethod
     def _readXYZ(
@@ -77,7 +124,8 @@ class O1NumHess_QC:
         assert coordinates.shape == (n_atoms, 3), f"the coordinates shape {coordinates.shape} is incorrect"
 
         if not isBohr:
-            coordinates = coordinates * O1NumHess_QC.angstrom2bohr
+            coordinates = coordinates * angstrom2bohr
+
         return path, coordinates, atoms
 
     @staticmethod
@@ -108,7 +156,8 @@ class O1NumHess_QC:
         try:
             energy = np.float(lines[0].split()[-1])
             grad: np.ndarray = np.array([[np.float(s) for s in line.split()[1:]] for line in lines[2:]])
-            assert grad.shape == (len(lines)-2, 3)
+            n_atoms = len(lines)-2
+            assert grad.shape == (n_atoms, 3)
             return energy, grad
         except (AssertionError, IndexError, ValueError):
             raise ValueError(f"Could not parse BDF output .egrad1 file: {egrad1_path}")
@@ -152,6 +201,12 @@ class O1NumHess_QC:
         delta: float,
         core: int,
         total_cores: Union[int, None],
+        dmax: float = 1.0,
+        thresh_imag: float = 1e-8,
+        has_g0: bool = False,
+        transinvar: bool = True,
+        rotinvar: bool = True,
+        verbosity: int = 0,
         **kwargs_for_grad_func,
     ) -> np.ndarray:
         """
@@ -163,13 +218,120 @@ class O1NumHess_QC:
             grad_func=grad_func,
             **kwargs_for_grad_func
         )
+        o1nh.setVerbosity(verbosity)
         # ========== use o1nh to calculate hessian
         if method.casefold() == "single".casefold():
             self.hessian = o1nh.singleSide(delta=delta, core=core, total_cores=total_cores)
         elif method.casefold() == "double".casefold():
             self.hessian = o1nh.doubleSide(delta=delta, core=core, total_cores=total_cores)
+        elif method.casefold() == "o1numhess".casefold():
+            self.thresh_imag = thresh_imag
+            self.hessian = self.runO1NumHess(delta, core, total_cores, o1nh, "BDF", dmax, has_g0, transinvar, rotinvar)
         else:
             raise ValueError(f"method {method} is not supported, only supported 'single' and 'double'")
+        return self.hessian
+
+    def runO1NumHess(self, delta, core, total_cores, o1nh, config="BDF", dmax=1.0, \
+                     has_g0=False, transinvar=False, rotinvar=False):
+        """
+        Prepare all the pre-requisites of o1nh.O1NumHess, and call it.
+        """
+        from .Swart import Swart
+
+        N = self.xyz_bohr.shape[0]
+        # Special case: for a single atom, and if translational invariance is present,
+        # return the zero Hessian
+        if N == 1:
+            if transinvar:
+                if self.verbosity > 0:
+                    print("Warning: there is only one atom. The Hessian is the zero matrix.")
+                self.hessian = np.zeros(3)
+            else:
+                # If the user does not assume translational invariance, this may mean there
+                # is an external electric field etc. so that translational invariance is not
+                # guaranteed.
+                # do a double-sided differentiation
+                self.hessian = o1nh.doubleSide(core=core, delta=delta, total_cores=total_cores)
+            return self.hessian
+
+        # effective distance matrix. Note that this is not simply the matrix of Cartesian
+        # distances, but is rather Cartesian distances minus sum of vdW radii
+        distmat = self._effDistMat
+
+        # modified Swart model Hessian
+        H0 = Swart(self.xyz_bohr, self.atomic_num)
+
+        # the following displacement directions should be included regardless of the molecule:
+        # (1) translations and rotations
+        # (2) the symmetric breathing mode
+        displdir = np.zeros([3*N,7])
+        # prepare the first Ntr displacement directions
+        # Ntr = 5 (for linear molecules) or 6 (for nonlinear molecules)
+        displdir[:,0:6], Ntr = vecTransRot(self.xyz_bohr)
+        # prepare the symmetric breathing mode
+        displdir[:,Ntr] = symmetricBreathing(self.xyz_bohr)
+        if Ntr==5:
+            displdir = displdir[:,0:6]
+
+        # Get the gradient of the unperturbed geometry, if there is one
+        if has_g0:
+            if config == "BDF":
+                inp = Path(o1nh.inp).absolute()
+                task_name = inp.stem
+                egrad1_in_path = Path(f"{task_name}.egrad1").absolute()
+                g0 = readEgrad1(egrad1_in_path, o1nh.encoding)
+            else:
+                raise Exception('Unsupported config: %s'%config)
+        else:
+            # do a gradient calculation at the unperturbed geometry
+            if total_cores == None:
+                total_cores0 = os.cpu_count()
+            else:
+                total_cores0 = total_cores
+            g0 = o1nh.grad_func(self.xyz_bohr,0,total_cores0,**o1nh.kwargs)
+
+        # The gradients along the translational and rotational directions
+        # Note: g are not the gradients themselves, but are
+        # ([gradients at displaced geometries] - g0)/delta, in the delta->0 limit
+        # Translations: zero
+        g = np.zeros([3*N,Ntr])
+        # The gradients along the rotational directions are not zero when the geometry
+        # is not an equilibrium geometry. We now account for this fact
+        g[:,3:Ntr] = rotationGradient(self.xyz_bohr,g0,Ntr-3)
+
+        # The only double-sided differentiation is along the symmetric breathing mode
+        doublesided = np.zeros(3*N, dtype = bool)
+        doublesided[:] = False
+        doublesided[Ntr] = True
+
+        # finally, the actual calculation
+        # (1) Initial Hessian
+        if self.verbosity > 2:
+            print("Stage 1: Initial estimation of the Hessian")
+        self.hessian, displdir, gout = o1nh.O1NumHess(core=core, delta=delta, dmax=dmax, distmat=distmat, \
+            H0=H0, displdir=displdir, g=g, g0=g0, doublesided=doublesided)
+
+        # (2) Check if there are imaginary modes
+        if self.verbosity > 2:
+            print("Stage 2: Check imaginary modes")
+        eigval, eigvec = np.linalg.eig(self.hessian)
+        # append all imaginary modes (if there are any) to displdir
+        Nimag = np.sum(eigval<-self.thresh_imag)
+        if self.verbosity > 2:
+            print(" - %d imaginary mode(s) found"%Nimag)
+
+        # (3) Run O1NumHess again, with the imaginary modes added to the list of displacements
+        if Nimag>0:
+            if self.verbosity > 2:
+                print("Stage 3: Displace along the imaginary modes")
+            displdir = np.hstack(displdir, eigvec[:,eigval<-self.thresh_imag])
+            g = np.hstack(g, gout)
+            self.hessian, _, __ = o1nh.O1NumHess(core=core, delta=delta, \
+                total_cores=total_cores, dmax=dmax, distmat=distmat, \
+                H0=H0, displdir=displdir, g=g, g0=g0, doublesided=doublesided)
+
+        if self.verbosity > 2:
+            print("Exit runO1NumHess")
         return self.hessian
 
     def calcHessian_BDF(
@@ -184,10 +346,23 @@ class O1NumHess_QC:
         tempdir: Union[Path, str] = "~/tmp",
         task_name: str = "",
         config_name: str = "",
+        dmax: float = 1.0,
+        thresh_imag: float = 1e-8,
+        has_g0: bool = False,
+        transinvar: bool = True,
+        rotinvar: bool = True,
     ) -> np.ndarray:
         """
         TODO 备注：单位直接从inp文件中读取，无需传入
         """
+        if self.verbosity > 2:
+            print("Start calculating numerical Hessian (BDF)...")
+            print("Parameters:")
+            print(" - Method: %s"%method)
+            print(" - Step length: %e Bohr"%delta)
+            print(" - Number of cores used in the calculation: %d"%core)
+            print(" - Maximum memory per core: %s"%mem)
+            print("")
         # ========== check params
         _ = getConfig("BDF", config_name)
 
@@ -202,8 +377,6 @@ class O1NumHess_QC:
         if not tempdir.exists():
             os.makedirs(tempdir, exist_ok=True)
 
-        task_name = task_name if task_name else inp.stem
-
         # ========== interface with O1NH
         return self._O1NH(
             grad_func=self._calcGrad_BDF,
@@ -211,6 +384,12 @@ class O1NumHess_QC:
             delta=delta,
             core=core,
             total_cores=total_cores,
+            dmax=dmax,
+            thresh_imag=thresh_imag,
+            has_g0=has_g0,
+            transinvar=transinvar,
+            rotinvar=rotinvar,
+            verbosity=self.verbosity,
             **{
                 "mem": mem,
                 "inp": inp,
@@ -243,6 +422,13 @@ class O1NumHess_QC:
         output to specified folder (not supported by BDF now) 受BDF限制，输出路径只能在当前文件夹
         输出的梯度单位一定是Bohr，输出的形状是一维向量
         """
+        # we do not recommend going to such high verbosity, except for serial runs
+        # in parallel runs, the printout of different processes will mess up with each other
+        if self.verbosity > 4:
+            print("Start calculating gradient %d"%index)
+            print("")
+            tstart = time.time()
+
         # ========== check params
         config = getConfig("BDF", config_name)
         assert 0 < core and isinstance(core, int) # <= os.cpu_count()
@@ -327,8 +513,22 @@ class O1NumHess_QC:
         os.system(f"bash {sh_out_path}")
 
         # ========== read result
-        _, grad = self._readEgrad1(egrad1_in_path)
+        energy, grad = self._readEgrad1(egrad1_in_path)
         assert grad.shape == self.xyz_bohr.shape, f"the grad shape from BDF output .egrad1 file: {egrad1_in_path} is {grad.shape}, different with the initial molecular shape {self.xyz_bohr.shape}"
+
+        # we do not recommend going to such high verbosity, except for serial runs
+        # in parallel runs, the printout of different processes will mess up with each other
+        if self.verbosity > 4:
+            print("Finished calculating gradient %d"%index)
+            print("Energy: %.12f Hartree"%energy)
+            print("Gradients in Hartree/Bohr:")
+            n_atoms = self.atoms.size
+            for iatom in range(n_atoms):
+                print("%5s %20.12f %20.12f %20.12f"%(self.atoms[iatom], grad[iatom,0], grad[iatom,1], grad[iatom,2]))
+            tend = time.time()
+            print("Total time: %.2f sec"%(tend-tstart))
+            print("")
+
         return grad.reshape((self.xyz_bohr.size,))
 
     def calcHessian_ORCA(
