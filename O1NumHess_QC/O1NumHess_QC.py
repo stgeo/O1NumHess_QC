@@ -4,6 +4,7 @@ from textwrap import dedent
 from typing import List, Sequence, Tuple, Union
 from pathlib import Path
 import os
+import re
 
 from O1NumHess import O1NumHess
 from .utils import getConfig
@@ -80,26 +81,6 @@ class O1NumHess_QC:
         return path, coordinates, atoms
 
     @staticmethod
-    def _readEgrad1(egrad1_path: Union[str, Path], encoding: str = "utf-8") -> Tuple[np.float, np.ndarray]:
-        """
-        read energy and gradient from BDF output .egrad1 file.
-
-        TODO 备注：BDF的输出单位
-        """
-        egrad1_path = Path(egrad1_path)
-        if not egrad1_path.exists():
-            raise FileNotFoundError(f"BDF output .egrad1 file: {egrad1_path} not found, error may occurred during calculating")
-        lines = [line.strip() for line in egrad1_path.read_text(encoding).splitlines() if line.strip()]
-
-        try:
-            energy = np.float(lines[0].split()[-1])
-            grad: np.ndarray = np.array([[np.float(s) for s in line.split()[1:]] for line in lines[2:]])
-            assert grad.shape == (len(lines)-2, 3)
-            return energy, grad
-        except (AssertionError, IndexError, ValueError):
-            raise ValueError(f"Could not parse BDF output .egrad1 file: {egrad1_path}")
-
-    @staticmethod
     def _writeXYZ(xyz_bohr: np.ndarray, atoms: Sequence[str], path: Path, useBohr: bool=False, comment: str = "", encoding: str = "utf-8"):
         assert xyz_bohr.shape == (xyz_bohr.size // 3, 3) and xyz_bohr.shape[0] == len(atoms)
         xyz_out = xyz_bohr if useBohr else xyz_bohr * O1NumHess_QC.bohr2angstrom
@@ -111,6 +92,85 @@ class O1NumHess_QC:
             ) + \
             "\n"
         path.write_text(xyz_str, encoding)
+
+    @staticmethod
+    def _readEgrad1(egrad1_path: Union[str, Path]) -> Tuple[np.float, np.ndarray]:
+        """
+        read energy and gradient from BDF output .egrad1 file.
+
+        TODO 备注：BDF的输出单位
+        """
+        egrad1_path = Path(egrad1_path).absolute()
+        if not egrad1_path.exists():
+            raise FileNotFoundError(f"BDF output .egrad1 file: {egrad1_path} not found, error may occurred during calculating")
+        lines = [line.strip() for line in egrad1_path.read_text().splitlines() if line.strip()]
+
+        try:
+            energy = np.float(lines[0].split()[-1])
+            grad: np.ndarray = np.array([[np.float(s) for s in line.split()[1:]] for line in lines[2:]])
+            assert grad.shape == (len(lines)-2, 3)
+            return energy, grad
+        except (AssertionError, IndexError, ValueError):
+            raise ValueError(f"Could not parse BDF output .egrad1 file: {egrad1_path}")
+
+    @staticmethod
+    def _readEngrad(engrad_path: Union[str, Path]) ->  Tuple[np.float, np.ndarray]:
+        """TODO output dimension is 1"""
+        engrad_path = Path(engrad_path).absolute()
+        if not engrad_path.exists():
+            raise FileNotFoundError(f"ORCA output .engrad file: {engrad_path} not found, error may occurred during calculating")
+        lines = engrad_path.read_text().splitlines()
+
+        try:
+            is_eng = False
+            for line in lines:
+                if is_eng and "#" not in line:
+                    eng = float(line)
+                    break
+                if "energy".casefold() in line.casefold():
+                    is_eng = True
+
+            is_grad = False
+            _grad = []
+            for line in lines:
+                if is_grad and "the".casefold() in line.casefold():
+                    is_grad = False
+                if is_grad and "#" not in line:
+                    _grad.append(float(line))
+                if "gradient".casefold() in line.casefold():
+                    is_grad = True
+            grad: np.ndarray = np.array(_grad)
+            print(grad)
+            return eng, grad
+        except NameError:
+            raise ValueError(f"Could not parse ORCA output .engrad file: {engrad_path}")
+
+    def _O1NH(
+        self,
+        grad_func: (...),
+        method: str,
+        delta: float,
+        core: int,
+        total_cores: Union[int, None],
+        **kwargs_for_grad_func,
+    ) -> np.ndarray:
+        """
+        interface with O1NH
+        """
+        # ========== initialize O1NH
+        o1nh = O1NumHess(
+            x=self.xyz_bohr.reshape((self.xyz_bohr.size,)),
+            grad_func=grad_func,
+            **kwargs_for_grad_func
+        )
+        # ========== use o1nh to calculate hessian
+        if method.casefold() == "single".casefold():
+            self.hessian = o1nh.singleSide(delta=delta, core=core, total_cores=total_cores)
+        elif method.casefold() == "double".casefold():
+            self.hessian = o1nh.doubleSide(delta=delta, core=core, total_cores=total_cores)
+        else:
+            raise ValueError(f"method {method} is not supported, only supported 'single' and 'double'")
+        return self.hessian
 
     def calcHessian_BDF(
         self,
@@ -129,11 +189,12 @@ class O1NumHess_QC:
         TODO 备注：单位直接从inp文件中读取，无需传入
         """
         # ========== check params
-        config = getConfig("BDF", config_name)
-        assert 0 < core <= os.cpu_count() and isinstance(core, int) # type: ignore
+        _ = getConfig("BDF", config_name)
+
         inp = Path(inp).absolute()
         if not inp.is_file():
             raise FileNotFoundError(f"input .inp file: {inp} not exists or not a file")
+
         tempdir = Path(tempdir)
         if str(tempdir).startswith("~"):
             tempdir = tempdir.expanduser()
@@ -141,26 +202,24 @@ class O1NumHess_QC:
         if not tempdir.exists():
             os.makedirs(tempdir, exist_ok=True)
 
-        # ========== initialize o1nh
-        x = self.xyz_bohr.reshape((self.xyz_bohr.size,))
-        o1nh = O1NumHess(
-            x,
-            self._calcGrad_BDF,
-            mem=mem,
-            inp=inp,
-            encoding=encoding,
-            tempdir=tempdir,
-            task_name=task_name,
-            config_name=config_name
+        task_name = task_name if task_name else inp.stem
+
+        # ========== interface with O1NH
+        return self._O1NH(
+            grad_func=self._calcGrad_BDF,
+            method=method,
+            delta=delta,
+            core=core,
+            total_cores=total_cores,
+            **{
+                "mem": mem,
+                "inp": inp,
+                "encoding": encoding,
+                "tempdir": tempdir,
+                "task_name": task_name,
+                "config_name": config_name,
+            }
         )
-        # ========== use o1nh to calculate hessian
-        if method.casefold() == "single".casefold():
-            self.hessian = o1nh.singleSide(delta=delta, core=core, total_cores=total_cores)
-        elif method.casefold() == "double".casefold():
-            self.hessian = o1nh.doubleSide(delta=delta, core=core, total_cores=total_cores)
-        else:
-            raise ValueError(f"method {method} is not supported, only supported 'single' and 'double'")
-        return self.hessian
 
     def _calcGrad_BDF(
         self,
@@ -197,6 +256,8 @@ class O1NumHess_QC:
         if not tempdir.exists():
             os.makedirs(tempdir, exist_ok=True)
 
+        task_name = task_name if task_name else inp.stem
+
         # ========== make sure the input x is valid
         x_bohr = np.array(x_bohr)
         assert x_bohr.size == self.xyz_bohr.size, f"the input size of x is {x_bohr.size}, different with the initial molecular size {self.xyz_bohr.size}"
@@ -204,8 +265,8 @@ class O1NumHess_QC:
         # ========== generate filename for BDF files
         # print(Path("."))
         suffix = str(index).zfill(len(str(x_bohr.size * 2))) # use index and x.size to generate a suffix with proper length
-        task_name = task_name if task_name else inp.stem
         task_name = f"{task_name}_{suffix}"
+        tempdir = tempdir / task_name
         xyz_out_path = Path(f"{task_name}.xyz").absolute()
         inp_out_path = Path(f"{task_name}.inp").absolute()
         sh_out_path = Path(f"{task_name}.sh").absolute()
@@ -256,8 +317,8 @@ class O1NumHess_QC:
             export OMP_NUM_THREADS={core}
             export OMP_STACKSIZE={mem}
 
-            rm -rf {Path(tempdir) / task_name}
-            {config["path"]} -tmpdir {Path(tempdir) / task_name} -r {inp_out_path.name} > {task_name}.out
+            rm -rf {tempdir}
+            {config["path"]} -tmpdir {tempdir} -r {inp_out_path.name} > {task_name}.out
             rm -rf .{task_name}.wrk
             """
         ), "utf-8")
@@ -269,3 +330,161 @@ class O1NumHess_QC:
         _, grad = self._readEgrad1(egrad1_in_path)
         assert grad.shape == self.xyz_bohr.shape, f"the grad shape from BDF output .egrad1 file: {egrad1_in_path} is {grad.shape}, different with the initial molecular shape {self.xyz_bohr.shape}"
         return grad.reshape((self.xyz_bohr.size,))
+
+    def calcHessian_ORCA(
+        self,
+        method: str,
+        delta: float,
+        total_cores: Union[int, None] = None,
+        inp: Union[str, Path] = ...,
+        encoding: str = "utf-8",
+        tempdir: Union[Path, str] = "~/tmp",
+        task_name: str = "",
+        config_name: str = "",
+    ) -> np.ndarray:
+        """
+        并行的core参数写在inp文件里
+        """
+        # ========== check params
+        _ = getConfig("ORCA", config_name)
+
+        inp = Path(inp).absolute()
+        if not inp.is_file():
+            raise FileNotFoundError(f"input .inp file: {inp} not exists or not a file")
+
+        tempdir = Path(tempdir)
+        if str(tempdir).startswith("~"):
+            tempdir = tempdir.expanduser()
+        tempdir = tempdir.absolute()
+        if not tempdir.exists():
+            os.makedirs(tempdir, exist_ok=True)
+
+        task_name = task_name if task_name else inp.stem
+
+        inp_str = inp.read_text(encoding=encoding)
+        # ========== get "core"
+        match = re.search(r"^\s*!.*?PAL(\d+)|^\s*%\s*pal\s*nprocs\s*(\d+)", inp_str, re.MULTILINE | re.IGNORECASE)
+        if match is None:
+            raise ValueError(f"inp file {inp} does not contain parallel information like 'PAL' or '%pal nprocs'")
+        core = int(match.group(1) if match.group(1) else match.group(2))
+
+        # ========== make sure to calculate gradient in ORCA
+        if re.search(r"^\s*!.*?EnGrad", inp_str, re.MULTILINE | re.IGNORECASE) is None:
+            raise ValueError(f"inp file {inp} does not contain parameter 'EnGrad', cannot calculate gradient in ORCA")
+
+        # ========== interface with O1NH
+        return self._O1NH(
+            grad_func=self._calcGrad_ORCA,
+            method=method,
+            delta=delta,
+            core=core,
+            total_cores=total_cores,
+            **{
+                "inp": inp,
+                "encoding": encoding,
+                "tempdir": tempdir,
+                "task_name": task_name,
+                "config_name": config_name,
+            }
+        )
+
+    def _calcGrad_ORCA(
+        self,
+        x_bohr: np.ndarray,
+        index: int,
+        core: int,
+        inp: Union[str, Path],
+        encoding: str = "utf-8",
+        tempdir: Union[str, Path] = "~/tmp",
+        task_name: str = "",
+        config_name: str = "",
+    ) -> np.ndarray:
+        # ========== check params
+        config = getConfig("ORCA", config_name)
+        assert 0 < core and isinstance(core, int) # <= os.cpu_count()
+        inp = Path(inp).absolute()
+        if not inp.is_file():
+            raise FileNotFoundError(f"input .inp file: {inp} not exists or not a file")
+        tempdir = Path(tempdir)
+        if str(tempdir).startswith("~"):
+            tempdir = tempdir.expanduser()
+        tempdir = tempdir.absolute()
+        if not tempdir.exists():
+            os.makedirs(tempdir, exist_ok=True)
+
+        task_name = task_name if task_name else inp.stem
+
+        # ========== make sure the input x is valid
+        x_bohr = np.array(x_bohr)
+        assert x_bohr.size == self.xyz_bohr.size, f"the input size of x is {x_bohr.size}, different with the initial molecular size {self.xyz_bohr.size}"
+
+        # ========== generate filename and path for ORCA files
+        # print(Path("."))
+        cwd = Path(".").absolute()
+        suffix = str(index).zfill(len(str(x_bohr.size * 2))) # use index and x.size to generate a suffix with proper length
+        task_name = f"{task_name}_{suffix}"
+        tempdir = tempdir / task_name
+        xyz_out_path = Path(f"{task_name}.xyz").absolute()
+        inp_out_path = Path(f"{task_name}.inp").absolute()
+        sh_out_path = Path(f"{task_name}.sh").absolute()
+        engrad_in_path = Path(f"{task_name}.engrad").absolute()
+
+        # ========== generate new .inp file for ORCA
+        inp_str = inp.read_text(encoding)
+
+        # make sure to calculate gradient in ORCA
+        if re.search(r"^\s*!.*?EnGrad", inp_str, re.MULTILINE | re.IGNORECASE) is None:
+            raise ValueError(f"inp file {inp} does not contain parameter 'EnGrad', cannot calculate gradient in ORCA")
+
+        # find "pal" and replace with current core
+        match = re.search(r"^\s*!.*?PAL(\d+)|^\s*%\s*pal\s*nprocs\s*(\d+)", inp_str, re.MULTILINE | re.IGNORECASE)
+        if match is None:
+            raise ValueError(f"inp file {inp} does not contain parallel information like 'PAL' or '%pal nprocs'")
+        pal1 = r"(^\s*!.*?PAL)(\d+)"
+        pal2 = r"(^\s*%\s*pal\s*nprocs\s*)(\d+)"
+        inp_str = re.sub(pal1, rf"\g<1>{core}", inp_str, flags=re.MULTILINE | re.IGNORECASE) # replace PAL
+        inp_str = re.sub(pal2, rf"\g<1>{core}", inp_str, flags=re.MULTILINE | re.IGNORECASE) # replace nprocs
+        # print(inp_str)
+
+        # find "unit"
+        useBohr = True if re.search(r"^\s*!.*?Bohrs", inp_str, re.MULTILINE | re.IGNORECASE) else False
+
+        # find and replace the .xyz file line
+        if re.search(r"(^\s*\*\s*xyzfile\s*\d+\s*\d+\s*)(.+\.xyz)", inp_str, re.MULTILINE | re.IGNORECASE) is None:
+            raise ValueError(f"inp file {inp} does not contain molecular coordinate information, coordinates must be specified by xyzfile format")
+        inp_str = re.sub(r"(^\s*\*\s*xyzfile\s*\d+\s*\d+\s*)(.+\.xyz)", rf"\g<1>{xyz_out_path.name}", inp_str, flags=re.MULTILINE | re.IGNORECASE)
+        # print(inp_str)
+
+        # output file
+        inp_out_path.write_text(inp_str, encoding=encoding)
+
+        # ========== generate new .xyz file for ORCA
+        self._writeXYZ(x_bohr.reshape(x_bohr.size // 3, 3), self.atoms, xyz_out_path, useBohr)
+
+        print(f"{tempdir}")
+        # ========== generate new .sh file to run ORCA
+        sh_out_path.write_text(config["bash"] + \
+            dedent(f"""
+            mkdir {tempdir}
+            cp {inp_out_path} {tempdir}
+            cp {xyz_out_path} {tempdir}
+
+            cd {tempdir}
+            {config["path"]} {inp_out_path.name} >& {task_name}.out
+
+            rm -f *.inp *.xyz *.tmp*
+            cp * {cwd}
+
+            rm -rf {tempdir}
+            """
+        ), "utf-8")
+        # cd to tempdir, calculate, del non-result file, copy the rest result file back
+
+        # ========== calculate
+        os.system(f"bash {sh_out_path}")
+
+        # ========== read result
+        _, grad = self._readEngrad(engrad_in_path)
+        assert grad.size == self.xyz_bohr.size, f"the grad size from ORCA output .engrad file: {engrad_in_path} is {grad.size}, different with the initial molecular shape {self.xyz_bohr.size}"
+        return grad.reshape((self.xyz_bohr.size,))
+

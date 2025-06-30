@@ -46,6 +46,7 @@ class TestBDF(unittest.TestCase):
         with self.assertRaises(TypeError):
             qc.calcHessian_BDF("single", 1e-3, core=2, mem="2G", total_cores=1.2, inp=inp) # type: ignore
         os.remove(xyz)
+        os.remove(inp)
 
     def test_BDF(self):
         cur_dir = Path(".").absolute()

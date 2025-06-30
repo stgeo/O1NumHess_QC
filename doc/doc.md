@@ -16,7 +16,7 @@ O1NumHess is unrelated to quantum chemistry and calculates the Hessian matrix by
 
 QC is responsible for interfacing with quantum chemistry software (such as BDF and ORCA) and does not directly calculate the Hessian. QC encapsulates the functionality of calling BDF and other software to calculate gradients as function g. When calculating Hessian, QC provides function g and molecular coordinates x to O1NH, allowing O1NH to calculate and return the Hessian.
 
-Below is a schematic diagram of using the BDF interface in QC to calculate the Hessian ( other softwares work in a similar way):
+Below is a schematic diagram of using the BDF interface in QC to calculate the Hessian (other softwares work in a similar way):
 
 ```mermaid
 sequenceDiagram
@@ -165,7 +165,6 @@ hessian = qc.calcHessian_BDF(
 
 * `method`: Currently can only be set to `single` or `double` (case-insensitive), representing the order of finite difference used by `O1NumHess` when calculating gradients.
 * `delta`: The delta value passed to `O1NumHess` when calculating gradients, which is used in O1NH to perturb molecular coordinates. As mentioned earlier, molecular coordinates are stored in `bohr` units inside QC, so the perturbation unit is `bohr`!
-<!-- * TODO 总核心数量 -->
 * `core` and `mem`:
   * `core` is the number of cores used when calling BDF to calculate a single gradient, corresponding to the environment variable `OMP_NUM_THREADS` set when running BDF. The type is int and it cannot exceed the number of cores read by the Python code `os.cpu_count()`
   * During actual computation, O1NH will calculate multiple gradients simultaneously based on this value and the total number of cores read by `os.cpu_count()`
@@ -185,6 +184,7 @@ hessian = qc.calcHessian_BDF(
 * `encoding`: (Optional, default is utf-8) Encoding of the inp input file, used to ensure that the inp file can be read correctly when it contains comments
 * `task_name`: Task name. All files from all calculations of the current task will use this as a prefix to distinguish between multiple tasks.
   * For example, when task_name is `abc`, the related files generated during BDF's first gradient calculation are `abc_001.xxx`, including `abc_001.out`, `abc_001.egrad1`, etc.
+  * 如果该值未提供，将会以`.inp`文件的文件名做为任务名称
 * `tempdir`: (Optional, default is `~/tmp`) Temporary folder for BDF runtime, corresponding to the environment variable `BDF_TMPDIR` set when running BDF. See [Installation and Operation](https://bdf-manual.readthedocs.io/en/latest/Installation.html#run-bdf-standalone-and-execute-the-job-with-a-shell-script)
   * Please ensure you have write and delete permissions for this folder
 * `config_name`: Configuration name in the BDF configuration file. The configuration file can contain multiple configurations with different names.
@@ -231,3 +231,5 @@ QC contains two functions: `calcHessian_BDF` and `_calcGrad_BDF`. `calcHessian_B
 * `_calcGrad_BDF` is the gradient function g that calls BDF to calculate gradients. It accepts the molecular coordinates x perturbed by O1NH, a counter `index`, and other parameters needed from O1NH (they were provided to O1NH during O1NH initialization), thereby performing gradient calculations
 * `_calcGrad_BDF` will generate the three files `.inp`, `.xyz`, `.sh` required for BDF gradient calculation based on the received parameters and call BDF for execution (the detailed process has been introduced in "Usage"). Finally, it reads the `.egrad1` file from BDF's output results to obtain the gradient and returns it to O1NH
 * After O1NH receives all the calculated gradients, it calculates the Hessian, and the entire process is complete.
+
+TODO
