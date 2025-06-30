@@ -5,6 +5,7 @@ import unittest
 import numpy as np
 from pathlib import Path
 from O1NumHess_QC import O1NumHess_QC
+from O1NumHess_QC.utils import bohr2angstrom, angstrom2bohr
 
 
 class TestBDF(unittest.TestCase):
@@ -19,7 +20,7 @@ class TestBDF(unittest.TestCase):
         print("-"*50 + "\n")
 
     def test_unitConvert(self):
-        self.assertAlmostEqual(O1NumHess_QC.bohr2angstrom * O1NumHess_QC.angstrom2bohr, 1)
+        self.assertAlmostEqual(bohr2angstrom * angstrom2bohr, 1)
 
     def test_readAndWriteXYZ(self):
         path = Path("_testR&W.xyz")
@@ -28,7 +29,7 @@ class TestBDF(unittest.TestCase):
         # write in Bohr, read in Angstrom and been converted to bohr, manually convert unit
         O1NumHess_QC._writeXYZ(xyz_bohr, atoms, path, useBohr=True)
         _, xyz_bohr_, _atoms = O1NumHess_QC._readXYZ(path, unit="angstrom")
-        np.testing.assert_array_almost_equal(xyz_bohr_ * O1NumHess_QC.bohr2angstrom, xyz_bohr)
+        np.testing.assert_array_almost_equal(xyz_bohr_ * bohr2angstrom, xyz_bohr)
         self.assertListEqual(atoms, list(_atoms))
         os.remove(path)
 
@@ -112,8 +113,68 @@ class TestBDF(unittest.TestCase):
             $end
             """).strip()
         )
-
         return test_inp
+
+    def test_BDF_Hessian(self):
+        cur_dir = Path(".").absolute()
+        test_dir = Path("./test_BDF").absolute()
+        os.makedirs(test_dir, exist_ok=True)
+
+        test_xyz = Path("test.xyz").absolute()
+        # To make the test finish quickly, we have to choose a small molecule.
+        # This may not capture all possible bugs.
+        test_xyz.write_text(dedent("""
+            4
+
+            H 0. 1. 0.
+            O 0. 0. 0.
+            O 0. 0. 1.5
+            H 1. 0. 1.5
+            """).lstrip()
+        )
+        test_inp = Path("test.inp").absolute()
+        test_inp.write_text(dedent(f"""
+            $COMPASS
+            Title
+            H2O2 grad
+            Basis
+            sto-3g
+            Geometry
+            file={test_xyz.name}
+            End geometry
+            $END
+
+            $xuanyuan
+            $end
+
+            $scf
+            RHF
+            $end
+
+            $resp
+            geom
+            $end
+            """).strip()
+        )
+
+        try:
+            os.chdir(test_dir)
+            qc = O1NumHess_QC(test_xyz)
+            hessian = qc.calcHessian_BDF(
+                method = "o1numhess",
+                delta = 1e-3,
+                core = 1,
+                mem = "4G",
+                inp = test_inp,
+                tempdir = "~/tmp",
+                config_name = "BDF",
+            )
+            print(hessian)
+        finally:
+            os.chdir(cur_dir)
+            os.remove(test_xyz)
+            os.remove(test_inp)
+            shutil.rmtree(test_dir)
 
     def _generateXYZ(self, path):
         test_xyz = Path(path).absolute()
