@@ -226,7 +226,8 @@ def rotationGradient(xyz: np.ndarray,
             Prot[3*i:3*i+3,j] = np.cross(ax[:,j],xyz[i,:]-barycen)
         Prot_norm = np.linalg.norm(Prot[:,j])
 
-        g[:,j] = np.cross(ax[:,j],g0)/Prot_norm
+        for i in range(N):
+            g[3*i:3*i+3,j] = np.cross(ax[:,j],g0[3*i:3*i+3])/Prot_norm
 
 def getConfig(program: str, config_name: str = "") -> Dict[str, str]:
     config_folder = Path("~/.O1NumHess_QC").expanduser().absolute()

@@ -131,7 +131,7 @@ class O1NumHess_QC:
     @staticmethod
     def _writeXYZ(xyz_bohr: np.ndarray, atoms: Sequence[str], path: Path, useBohr: bool=False, comment: str = "", encoding: str = "utf-8"):
         assert xyz_bohr.shape == (xyz_bohr.size // 3, 3) and xyz_bohr.shape[0] == len(atoms)
-        xyz_out = xyz_bohr if useBohr else xyz_bohr * O1NumHess_QC.bohr2angstrom
+        xyz_out = xyz_bohr if useBohr else xyz_bohr * bohr2angstrom
         xyz_str = f"{len(atoms)}\n" + \
             comment.strip() + "\n" + \
             "\n".join([
@@ -226,13 +226,23 @@ class O1NumHess_QC:
             self.hessian = o1nh.doubleSide(delta=delta, core=core, total_cores=total_cores)
         elif method.casefold() == "o1numhess".casefold():
             self.thresh_imag = thresh_imag
-            self.hessian = self.runO1NumHess(delta, core, total_cores, o1nh, "BDF", dmax, has_g0, transinvar, rotinvar)
+            self.hessian = self.runO1NumHess(delta=delta, core=core, total_cores=total_cores,\
+                o1nh=o1nh, config="BDF", dmax=dmax, has_g0=has_g0, transinvar=transinvar, rotinvar=rotinvar)
         else:
             raise ValueError(f"method {method} is not supported, only supported 'single' and 'double'")
         return self.hessian
 
-    def runO1NumHess(self, delta, core, total_cores, o1nh, config="BDF", dmax=1.0, \
-                     has_g0=False, transinvar=False, rotinvar=False):
+    def runO1NumHess(self,
+                     delta: float,
+                     core: int,
+                     total_cores: Union[int, None],
+                     o1nh,
+                     config: str = "BDF",
+                     dmax: float = 1.0,
+                     has_g0: bool = False,
+                     transinvar: bool = False,
+                     rotinvar: bool = False,
+                     ):
         """
         Prepare all the pre-requisites of o1nh.O1NumHess, and call it.
         """
@@ -286,9 +296,13 @@ class O1NumHess_QC:
             # do a gradient calculation at the unperturbed geometry
             if total_cores == None:
                 total_cores0 = os.cpu_count()
+                if not isinstance(total_cores0, int):
+                    total_cores0 = core
             else:
                 total_cores0 = total_cores
-            g0 = o1nh.grad_func(self.xyz_bohr,0,total_cores0,**o1nh.kwargs)
+            # Use 6*N as the index, to avoid clashing with the calculations of
+            # displaced geometries
+            g0 = o1nh.grad_func(self.xyz_bohr,6*N,total_cores0,**o1nh.kwargs)
 
         # The gradients along the translational and rotational directions
         # Note: g are not the gradients themselves, but are

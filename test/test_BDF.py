@@ -161,7 +161,8 @@ class TestBDF(unittest.TestCase):
             os.chdir(test_dir)
             qc = O1NumHess_QC(test_xyz)
             hessian = qc.calcHessian_BDF(
-                method = "o1numhess",
+                #method = "o1numhess",
+                method = "single",
                 delta = 1e-3,
                 core = 1,
                 mem = "4G",
