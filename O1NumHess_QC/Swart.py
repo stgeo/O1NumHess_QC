@@ -15,7 +15,7 @@ Warning:
 '''
 import numpy as np
 import math
-from utils import *
+from .utils import *
 
 def Bmat_bond(xyz: np.ndarray, i: int, j: int) -> np.array:
     '''
@@ -124,7 +124,7 @@ def Swart(xyz: np.ndarray, atomic_num: np.array) -> np.ndarray:
     '''
     
     # Number of atoms
-    N = atoms.size
+    N = atomic_num.size
 
     covrad = np.zeros(N)
     for i in range(N):
