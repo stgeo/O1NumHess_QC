@@ -1,9 +1,10 @@
 import importlib.util
+import os
 import sys
 import numpy as np
 import math
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Union
 
 # Useful constants
 bohr2angstrom = 0.529177249
@@ -20,7 +21,7 @@ covalent_radii = np.array([0.0,0.32,0.46,1.33,1.02,0.85,0.75,0.71,0.63,0.64,0.67
     1.52,1.46,1.37,1.31,1.29,1.22,1.23,1.24,1.33,1.44,1.44,1.51,1.45,1.47,\
     1.42,2.23,2.01,1.86,1.75,1.69,1.7,1.71,1.72,1.66,1.66,1.68,1.68,1.65,\
     1.67,1.73,1.76,1.61])*angstrom2bohr
-    
+
 # vdw radii: from UFF
 # For large conjugated systems, it's beneficial to divide the hydrogen
 # radius by 2. For other systems it's generally bad to do so
@@ -101,7 +102,7 @@ def dihedral(xyz: np.ndarray, A: int, B: int, C: int, D: int) -> float:
     else:
         return dihed
 
-def mominertia(xyz: np.ndarray) -> Tuple[np.array, np.ndarray, np.array]:
+def mominertia(xyz: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     '''
     Input: xyz (np.ndarray, dimensions (natom,3), coordinates in Bohr)
     Output: I (np.array, dimension (3), moments of inertia assuming
@@ -176,7 +177,7 @@ def vecTransRot(xyz: np.ndarray, thresh_lin: float = 1e-4) -> Tuple[np.ndarray, 
 
     return P, Ntr
 
-def symmetricBreathing(xyz: np.ndarray) -> np.array:
+def symmetricBreathing(xyz: np.ndarray) -> np.ndarray:
     '''
     Return the vibrational modes corresponding to the symmetric vibration of
     the whole molecule, i.e. where the shape of the molecule is unchanged and
@@ -193,7 +194,7 @@ def symmetricBreathing(xyz: np.ndarray) -> np.array:
     return P
 
 def rotationGradient(xyz: np.ndarray,
-                     g0: np.array,
+                     g0: np.ndarray,
                      Nrot: int,
                      ) -> np.ndarray:
     '''
@@ -261,6 +262,10 @@ def getConfig(program: str, config_name: str = "") -> Dict[str, str]:
     except NameError:
         raise AttributeError(f"the config file {file} does not have the config name: '{config_name}'")
 
+def getAbsPath(path: Union[str, Path]) -> Path:
+    """parse path, expand `~`, make absolute, return normpath"""
+    return Path(os.path.normpath(os.path.abspath(os.path.expanduser(path))))
+
 
 if __name__ == "__main__":
     # test
@@ -292,4 +297,6 @@ if __name__ == "__main__":
 
 
     print(getConfig("BDF"))
-    print(getConfig("BDF", "BDf")) # error test
+    # print(getConfig("BDF", "BDf")) # error test
+    print(getAbsPath("~/abc/dfs"))
+    print(getAbsPath("../abc/dfs"))

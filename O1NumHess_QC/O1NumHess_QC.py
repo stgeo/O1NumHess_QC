@@ -9,6 +9,7 @@ import time
 
 from O1NumHess import O1NumHess
 from .utils import *
+from .utils import getAbsPath, getConfig
 
 class O1NumHess_QC:
 
@@ -59,7 +60,7 @@ class O1NumHess_QC:
         return distmat
 
     @staticmethod
-    def _atoms2AtomicNum(atoms: Tuple[str, ...]) -> np.array:
+    def _atoms2AtomicNum(atoms: Tuple[str, ...]) -> np.ndarray:
         """
         Convert an array of element names to an array of atomic numbers.
         Input: atoms (tuple, dimension (N), element names)
@@ -81,7 +82,7 @@ class O1NumHess_QC:
         unit: str = "angstrom",
     ) -> Tuple[Path, np.ndarray, Tuple[str, ...]]:
         """
-        Read atomic coordinates from an XYZ file into a numpy array.
+        Read atomic coordinates from an XYZ file into a numpy array. `~` will be treated as user home.
 
         Return filepath, coordinates, atoms. Coordinates are in Bohr!
 
@@ -102,7 +103,7 @@ class O1NumHess_QC:
             isBohr = True
 
         # handle path
-        path = Path(path).absolute() # make path absolute
+        path = getAbsPath(path) # make path absolute
         if not path.is_file():
             raise FileNotFoundError(f"input XYZ file {path} not exists or not a file")
         # read file, remove empty lines and strip whitespace, keep first 2 lines (second line may be empty)
@@ -149,7 +150,7 @@ class O1NumHess_QC:
 
         TODO 备注：BDF的输出单位
         """
-        egrad1_path = Path(egrad1_path).absolute()
+        egrad1_path = getAbsPath(egrad1_path)
         if not egrad1_path.exists():
             raise FileNotFoundError(f"BDF output .egrad1 file: {egrad1_path} not found, error may occurred during calculating")
         lines = [line.strip() for line in egrad1_path.read_text().splitlines() if line.strip()]
@@ -166,7 +167,7 @@ class O1NumHess_QC:
     @staticmethod
     def _readEngrad(engrad_path: Union[str, Path]) ->  Tuple[np.float, np.ndarray]:
         """TODO output dimension is 1"""
-        engrad_path = Path(engrad_path).absolute()
+        engrad_path = getAbsPath(engrad_path)
         if not engrad_path.exists():
             raise FileNotFoundError(f"ORCA output .engrad file: {engrad_path} not found, error may occurred during calculating")
         lines = engrad_path.read_text().splitlines()
@@ -287,9 +288,9 @@ class O1NumHess_QC:
         # Get the gradient of the unperturbed geometry, if there is one
         if has_g0:
             if config == "BDF":
-                inp = Path(o1nh.inp).absolute()
+                inp = getAbsPath(o1nh.inp)
                 task_name = inp.stem
-                egrad1_in_path = Path(f"{task_name}.egrad1").absolute()
+                egrad1_in_path = getAbsPath(f"{task_name}.egrad1")
                 g0 = readEgrad1(egrad1_in_path, o1nh.encoding)
             else:
                 raise Exception('Unsupported config: %s'%config)
@@ -381,14 +382,10 @@ class O1NumHess_QC:
         # ========== check params
         _ = getConfig("BDF", config_name)
 
-        inp = Path(inp).absolute()
+        inp = getAbsPath(inp)
         if not inp.is_file():
             raise FileNotFoundError(f"input .inp file: {inp} not exists or not a file")
-
-        tempdir = Path(tempdir)
-        if str(tempdir).startswith("~"):
-            tempdir = tempdir.expanduser()
-        tempdir = tempdir.absolute()
+        tempdir = getAbsPath(tempdir)
         if not tempdir.exists():
             os.makedirs(tempdir, exist_ok=True)
 
@@ -447,13 +444,10 @@ class O1NumHess_QC:
         # ========== check params
         config = getConfig("BDF", config_name)
         assert 0 < core and isinstance(core, int) # <= os.cpu_count()
-        inp = Path(inp).absolute()
+        inp =getAbsPath(inp)
         if not inp.is_file():
             raise FileNotFoundError(f"input .inp file: {inp} not exists or not a file")
-        tempdir = Path(tempdir)
-        if str(tempdir).startswith("~"):
-            tempdir = tempdir.expanduser()
-        tempdir = tempdir.absolute()
+        tempdir = getAbsPath(tempdir)
         if not tempdir.exists():
             os.makedirs(tempdir, exist_ok=True)
 
@@ -468,10 +462,10 @@ class O1NumHess_QC:
         suffix = str(index).zfill(len(str(x_bohr.size * 2))) # use index and x.size to generate a suffix with proper length
         task_name = f"{task_name}_{suffix}"
         tempdir = tempdir / task_name
-        xyz_out_path = Path(f"{task_name}.xyz").absolute()
-        inp_out_path = Path(f"{task_name}.inp").absolute()
-        sh_out_path = Path(f"{task_name}.sh").absolute()
-        egrad1_in_path = Path(f"{task_name}.egrad1").absolute()
+        xyz_out_path = getAbsPath(f"{task_name}.xyz")
+        inp_out_path = getAbsPath(f"{task_name}.inp")
+        sh_out_path = getAbsPath(f"{task_name}.sh")
+        egrad1_in_path = getAbsPath(f"{task_name}.egrad1")
 
         # ========== generate new .inp file for BDF
         # read inp file, drop comments and right spaces
@@ -563,14 +557,10 @@ class O1NumHess_QC:
         # ========== check params
         _ = getConfig("ORCA", config_name)
 
-        inp = Path(inp).absolute()
+        inp = getAbsPath(inp)
         if not inp.is_file():
             raise FileNotFoundError(f"input .inp file: {inp} not exists or not a file")
-
-        tempdir = Path(tempdir)
-        if str(tempdir).startswith("~"):
-            tempdir = tempdir.expanduser()
-        tempdir = tempdir.absolute()
+        tempdir = getAbsPath(tempdir)
         if not tempdir.exists():
             os.makedirs(tempdir, exist_ok=True)
 
@@ -617,13 +607,10 @@ class O1NumHess_QC:
         # ========== check params
         config = getConfig("ORCA", config_name)
         assert 0 < core and isinstance(core, int) # <= os.cpu_count()
-        inp = Path(inp).absolute()
+        inp = getAbsPath(inp)
         if not inp.is_file():
             raise FileNotFoundError(f"input .inp file: {inp} not exists or not a file")
-        tempdir = Path(tempdir)
-        if str(tempdir).startswith("~"):
-            tempdir = tempdir.expanduser()
-        tempdir = tempdir.absolute()
+        tempdir = getAbsPath(tempdir)
         if not tempdir.exists():
             os.makedirs(tempdir, exist_ok=True)
 
@@ -635,14 +622,14 @@ class O1NumHess_QC:
 
         # ========== generate filename and path for ORCA files
         # print(Path("."))
-        cwd = Path(".").absolute()
+        cwd = getAbsPath(".")
         suffix = str(index).zfill(len(str(x_bohr.size * 2))) # use index and x.size to generate a suffix with proper length
         task_name = f"{task_name}_{suffix}"
         tempdir = tempdir / task_name
-        xyz_out_path = Path(f"{task_name}.xyz").absolute()
-        inp_out_path = Path(f"{task_name}.inp").absolute()
-        sh_out_path = Path(f"{task_name}.sh").absolute()
-        engrad_in_path = Path(f"{task_name}.engrad").absolute()
+        xyz_out_path = getAbsPath(f"{task_name}.xyz")
+        inp_out_path = getAbsPath(f"{task_name}.inp")
+        sh_out_path = getAbsPath(f"{task_name}.sh")
+        engrad_in_path = getAbsPath(f"{task_name}.engrad")
 
         # ========== generate new .inp file for ORCA
         inp_str = inp.read_text(encoding)
