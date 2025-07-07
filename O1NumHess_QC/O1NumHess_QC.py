@@ -119,7 +119,7 @@ class O1NumHess_QC:
 
         # Extract coordinates (skip the first two lines)
         try:
-            coordinates: np.ndarray = np.array([[np.float(s) for s in line.split()[1:]] for line in lines[2:]])
+            coordinates: np.ndarray = np.array([[float(s) for s in line.split()[1:]] for line in lines[2:]])
             atoms = tuple(line.split()[0] for line in lines[2:]) # use tuple to make sure it is not editable
         except (IndexError, ValueError):
             raise ValueError("Could not parse XYZ file, the file may be incorrect")
@@ -144,7 +144,7 @@ class O1NumHess_QC:
         path.write_text(xyz_str, encoding)
 
     @staticmethod
-    def _readEgrad1(egrad1_path: Union[str, Path]) -> Tuple[np.float, np.ndarray]:
+    def _readEgrad1(egrad1_path: Union[str, Path]) -> Tuple[float, np.ndarray]:
         """
         read energy and gradient from BDF output .egrad1 file.
 
@@ -156,8 +156,8 @@ class O1NumHess_QC:
         lines = [line.strip() for line in egrad1_path.read_text().splitlines() if line.strip()]
 
         try:
-            energy = np.float(lines[0].split()[-1])
-            grad: np.ndarray = np.array([[np.float(s) for s in line.split()[1:]] for line in lines[2:]])
+            energy = float(lines[0].split()[-1])
+            grad: np.ndarray = np.array([[float(s) for s in line.split()[1:]] for line in lines[2:]])
             n_atoms = len(lines)-2
             assert grad.shape == (n_atoms, 3)
             return energy, grad
@@ -165,7 +165,7 @@ class O1NumHess_QC:
             raise ValueError(f"Could not parse BDF output .egrad1 file: {egrad1_path}")
 
     @staticmethod
-    def _readEngrad(engrad_path: Union[str, Path]) ->  Tuple[np.float, np.ndarray]:
+    def _readEngrad(engrad_path: Union[str, Path]) ->  Tuple[float, np.ndarray]:
         """TODO output dimension is 1"""
         engrad_path = getAbsPath(engrad_path)
         if not engrad_path.exists():
