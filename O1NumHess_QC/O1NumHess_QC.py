@@ -22,12 +22,13 @@ class O1NumHess_QC:
         self.verbosity = verbosity
         # read the XYZ file, get path, coordinates and atoms
         self.xyz_path, self.xyz_bohr, self.atoms = self._readXYZ(xyz_path, encoding, unit)
+        # self.atoms is tuple of element str
         if self.verbosity > 1:
-            print("Successfully read coordinates from %s"%path)
+            print("Successfully read coordinates from %s" % self.xyz_path)
             print("Atomic coordinates in Bohr:")
-            for iatom in range(self.atoms.size):
-                print("%5s %20.12f %20.12f %20.12f"%(self.atoms[iatom], self.xyz_bohr[iatom,0], \
-                    self.xyz_bohr[iatom,1], self.xyz_bohr[iatom,2]))
+            for i_atom in range(len(self.atoms)):
+                print("%5s %20.12f %20.12f %20.12f"%(self.atoms[i_atom], self.xyz_bohr[i_atom,0], \
+                    self.xyz_bohr[i_atom,1], self.xyz_bohr[i_atom,2]))
 
         # generate atomic numbers, for future use
         self.atomic_num = self._atoms2AtomicNum(self.atoms)
@@ -189,8 +190,8 @@ class O1NumHess_QC:
                 if "gradient".casefold() in line.casefold():
                     is_grad = True
             grad: np.ndarray = np.array(_grad)
-            print(grad)
-            return eng, grad
+            # print(grad)
+            return eng, grad # type: ignore
         except NameError:
             raise ValueError(f"Could not parse ORCA output .engrad file: {engrad_path}")
 
@@ -536,11 +537,11 @@ class O1NumHess_QC:
             print("Finished calculating gradient %d"%index)
             print("Energy: %.12f Hartree"%energy)
             print("Gradients in Hartree/Bohr:")
-            n_atoms = self.atoms.size
+            n_atoms = len(self.atoms)
             for iatom in range(n_atoms):
                 print("%5s %20.12f %20.12f %20.12f"%(self.atoms[iatom], grad[iatom,0], grad[iatom,1], grad[iatom,2]))
             tend = time.time()
-            print("Total time: %.2f sec"%(tend-tstart))
+            print("Total time: %.2f sec"%(tend-tstart)) # type: ignore
             print("")
 
         return grad.reshape((self.xyz_bohr.size,))
@@ -582,7 +583,7 @@ class O1NumHess_QC:
             raise ValueError(f"inp file {inp} does not contain parallel information like 'PAL' or '%pal nprocs'")
         core = int(match.group(1) if match.group(1) else match.group(2))
 
-        # ========== make sure to calculate gradient in ORCA
+        # ========== make sure gradient is calculated in ORCA
         if re.search(r"^\s*!.*?EnGrad", inp_str, re.MULTILINE | re.IGNORECASE) is None:
             raise ValueError(f"inp file {inp} does not contain parameter 'EnGrad', cannot calculate gradient in ORCA")
 
@@ -664,6 +665,7 @@ class O1NumHess_QC:
         useBohr = True if re.search(r"^\s*!.*?Bohrs", inp_str, re.MULTILINE | re.IGNORECASE) else False
 
         # find and replace the .xyz file line
+        # TODO regex improve
         if re.search(r"(^\s*\*\s*xyzfile\s*\d+\s*\d+\s*)(.+\.xyz)", inp_str, re.MULTILINE | re.IGNORECASE) is None:
             raise ValueError(f"inp file {inp} does not contain molecular coordinate information, coordinates must be specified by xyzfile format")
         inp_str = re.sub(r"(^\s*\*\s*xyzfile\s*\d+\s*\d+\s*)(.+\.xyz)", rf"\g<1>{xyz_out_path.name}", inp_str, flags=re.MULTILINE | re.IGNORECASE)
