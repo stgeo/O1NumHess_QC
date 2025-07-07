@@ -60,6 +60,21 @@ In short, O1NH will perturb the molecular coordinates multiple times, passing ea
 <!-- TODO 配置文件相关的代码有待完善 -->
 <!-- root权限 -->
 
+### Important Notes About Path
+
+**Do not include any spaces in your paths!** If spaces appear, paths need to be enclosed in quotes, which may cause problems when parsing and writing files. This includes but is not limited to:
+
+* installation paths of QC and O1NH,
+* project storage paths,
+* temp directory for chemical software,
+* input file names for chemical software,
+* external file paths referenced in input files,
+* some parameters that will be used as file names (such parameters will be specially reminded).
+
+If support is necessary, please submit an issue.
+
+The tilde `~` will be expanded to the user's home directory.
+
 ### Config
 
 During installation, a configuration folder `~/.O1NumHess_QC` will be created, containing example configuration files `xxx_config_example.py` for related software. Copy the files `xxx_config_example.py` to `xxx_config.py` and modify them according to your own conditions.
@@ -114,6 +129,34 @@ export BDF_TMPDIR=/tmp/$RANDOM
 ```
 
 Since these three variables differ for each task, QC will generate and complete this part of the code at runtime, so please **do not** specify them in the configuration file.
+
+#### ORCA config
+
+Here is the main part of ORCA configuration:
+
+```python
+{
+    "name": "ORCA", # unique name between different configurations
+    "bash": dedent(
+        # put your bash command below for running ORCA successfully
+        """
+        #!/bin/bash
+        # openmpi
+        MPI_HOME=/usr/local/openmpi
+        export PATH=${MPI_HOME}/bin:$PATH
+        export LD_LIBRARY_PATH=${MPI_HOME}/lib:$LD_LIBRARY_PATH
+        export MANPATH=${MPI_HOME}/share/man:$MANPATH
+
+        # ORCA 6.0.1 secion
+        export LD_LIBRARY_PATH=/path/to/orca:$LD_LIBRARY_PATH
+        export PATH=/path/to/orca:$PATH
+        """
+    ).lstrip(), # use lstrip() to remove the first empty line before #!/bin/bash
+    "path": r"/<path to orca>/orca", # program path
+},
+```
+
+The `bash` part contains 2 parts: "openmpi" for parallel running and "ORCA" main part.
 
 ### Initialization
 
@@ -176,17 +219,18 @@ hessian = qc.calcHessian_BDF(
   * This value must be less than or equal to the maximum number of cores in the current system obtained by `os.cpu_count()`; when set to None, the result obtained by `os.cpu_count()` is used by default
   * If either this value or `os.cpu_count()` does not exist or cannot be obtained, a warning will be generated (`os.cpu_count()` may not be able to get a result and return None); if both do not exist, an error will be raised
 * `inp`: (**important**) Input file for calling BDF to calculate gradients
-  * Users should specify the input information for calling BDF to calculate a single gradient in this file. All gradients will be calculated based on this input file.
+  * Users should specify the input **information for calling BDF to calculate a single gradient in this file**. All gradients will be calculated based on this input file.
   * In this file, the molecular coordinates to be calculated should be written in the format `file=xxx.xyz`. Refer to the examples in `readme.md` or the official documentation [Input and output formats](https://bdf-manual.readthedocs.io/en/latest/Input%20and%20Output.html#read-the-molecular-coordinates-from-the-specified-file).
   * **About units**: The units in the `.xyz` file are specified during initialization. During calculation, if you want to use bohr as the unit for calculation, you can configure it directly in the inp file, and QC will read the file and convert according to the user's input
     * For example, the units in the `.xyz` file can be angstrom, and the `.inp` file can specify bohr as the unit for calculation. QC will automatically convert coordinates to bohr when calling BDF
   * For details about what happens during calculation and how this `.inp` file is used, please refer to the explanation below and the `Development` section.
 * `encoding`: (Optional, default is utf-8) Encoding of the inp input file, used to ensure that the inp file can be read correctly when it contains comments
-* `task_name`: Task name. All files from all calculations of the current task will use this as a prefix to distinguish between multiple tasks.
-  * For example, when task_name is `abc`, the related files generated during BDF's first gradient calculation are `abc_001.xxx`, including `abc_001.out`, `abc_001.egrad1`, etc.
-  * 如果该值未提供，将会以`.inp`文件的文件名做为任务名称
 * `tempdir`: (Optional, default is `~/tmp`) Temporary folder for BDF runtime, corresponding to the environment variable `BDF_TMPDIR` set when running BDF. See [Installation and Operation](https://bdf-manual.readthedocs.io/en/latest/Installation.html#run-bdf-standalone-and-execute-the-job-with-a-shell-script)
   * Please ensure you have write and delete permissions for this folder
+* `task_name`: Task name. All files from all calculations of the current task will use this as a prefix to distinguish between multiple tasks.
+  * For example, when task_name is `abc`, the related files generated during BDF's first gradient calculation are `abc_001.xxx`, including `abc_001.out`, `abc_001.egrad1`, etc.
+  * If this value is not provided, the filename of the `.inp` file will be used as the task name
+  * This parameter will be part of the path name, so **spaces are not allowed**!
 * `config_name`: Configuration name in the BDF configuration file. The configuration file can contain multiple configurations with different names.
   * If this parameter is empty, the first configuration found in the configuration file will be used by default
   * The purpose of this parameter is: if users have multiple BDF versions or multiple running configurations, they can write multiple configurations in the configuration file and specify the specific configuration to be used for each task.
@@ -207,6 +251,49 @@ Assuming the current system has a total of 16 cores and 64GB memory, the complet
 * **Note**: Due to BDF limitations, all input files generated by gradient function g and output files generated by BDF can only appear in the **current working directory**, which is the path where QC is called and executed. Therefore, to prevent the working directory from being overwhelmed by a large number of files, it is recommended to run QC following the method in "example" part in `readme.md`.
 * Finally, function g reads the `abc_001.egrad1` file from BDF's output files to obtain the gradient with units of Hartree/Bohr and returns it to O1NH
 * After O1NH receives all the calculated gradients, it calculates the Hessian and returns it, with units of Hartree/Bohr^2
+
+### ORCA
+
+If the ORCA configuration file is correctly configured, you can use the following code to call ORCA to calculate the Hessian matrix.
+
+It is strongly recommended to read the BDF documentation section first, which provides detailed explanations of many parameters, so they will not be repeated here.
+
+```Python
+hessian = qc.calcHessian_ORCA(
+    method = "single",
+    delta = 1e-3,
+    total_cores = 12,
+    inp = "../ch4.inp",
+    encoding = "utf-8",
+    tempdir = "~/tmp",
+    task_name = "orca",
+    config_name = "ORCA",
+)
+```
+
+* `method`: (same as BDF) Currently can only be set to `single` or `double` (case-insensitive), representing the order of finite difference used by `O1NumHess` when calculating gradients.
+* `delta`: (see BDF part for details) The delta value passed to `O1NumHess` when calculating gradients, in `Bohr` unit.
+* `total_cores`: (**important** see BDF part for details) The total number of cores to be used for the current computing task, None (default) or int type.
+* `inp`: (**important**) Input file for calling BDF to calculate gradients
+  * Users should specify the input **information for calling ORCA to calculate a single gradient in this file**. All gradients will be calculated based on this input file.
+  * In this file, the molecular coordinates to be calculated should be written in the format `* xyzfile Charge Multiplicity Filename`, **QC only support this format**. Refer to the official documentation for details [5. Input of Coordinates - ORCA 6.0 Manual](https://www.faccts.de/docs/orca/6.0/manual/contents/input.html#reading-coordinates-from-external-files)
+* `encoding`: (same as BDF) (Optional, default is utf-8) Encoding of the inp input file, used to ensure that the inp file can be read correctly when it contains comments
+* `tempdir`: (**important**, different with BDF!) (Optional, default is `~/tmp`)
+  * ORCA users are accustomed to setting a temporary path, copying all files to this temporary folder for calculation, and copying all result files back to the original path after calculation. This parameter is this temporary path.
+  * Please ensure you have write and delete permissions for this folder
+* `task_name`: (same as BDF) All files from all calculations of the current task will use this as a prefix to distinguish between multiple tasks.
+* `config_name`: (same as BDF) Configuration name in the ORCA configuration file.
+
+special notes for ORCA:
+
+* The ORCA section no longer has the independent "number of cores for calculating each gradient" parameter!
+  * The number of cores used for each calculation should be directly written in the `.inp` file. For the specific format, refer to point 4 in [3. Calling the Program (Serial and Parallel) - ORCA 6.0 Manual](https://www.faccts.de/docs/orca/6.0/manual/contents/calling.html#hints-on-the-use-of-parallel-orca)
+  * QC will parse the number of cores inside and provide it to O1NH, which will dynamically manage the number of cores according to the situation to achieve maximum computational efficiency
+* As for memory, it is also written in `.inp` file
+
+TODO 关于gbw文件
+
+Except for copying related files to the temporary folder and copying result files back to the current folder, ORCA's operating logic is completely consistent with BDF. For the specific internal working principle, please refer to the `Development` section.
 
 ## Development
 
@@ -232,4 +319,25 @@ QC contains two functions: `calcHessian_BDF` and `_calcGrad_BDF`. `calcHessian_B
 * `_calcGrad_BDF` will generate the three files `.inp`, `.xyz`, `.sh` required for BDF gradient calculation based on the received parameters and call BDF for execution (the detailed process has been introduced in "Usage"). Finally, it reads the `.egrad1` file from BDF's output results to obtain the gradient and returns it to O1NH
 * After O1NH receives all the calculated gradients, it calculates the Hessian, and the entire process is complete.
 
-TODO
+### ORCA
+
+Here we introduce the specific logic of QC interacting with ORCA.
+
+Similar to BDF, QC contains two functions: `calcHessian_ORCA` and `_calcGrad_ORCA`. `calcHessian_ORCA` is responsible for calling O1NH to calculate the Hessian, and `_calcGrad_ORCA` is the function g mentioned earlier that can call BDF to calculate gradients.
+
+The logic of `calcHessian_ORCA` is similar to BDF, but it first reads the `.inp` file and parses the number of cores used for calculating each gradients as the `core` parameter to pass to O1NH, and ensures that the `.inp` file contains the `EnGrad` parameter so ORCA will calculate gradients.
+
+For `_calcGrad_ORCA` when calculating each gradients:
+
+* `_calcGrad_ORCA` first reads the `.inp` file
+  * Finds the `core` parameter inside and replaces it with the value provided by O1NH
+  * Checks whether `Bohrs` units exist inside, as the basis for subsequently generating `.xyz` files
+  * Finds and replaces the file path in the `xyzfile` section with the actual file path during calculation
+* Generates `.xyz` files based on the units read from the `.inp` file
+* Generates `.sh` files based on the user configuration file, which will:
+  * Create temporary folders specified by the `tempdir` and `task_name` parameters
+  * Copy all files needed for calculation to the temporary folder and change the working path
+  * Call ORCA to calculate gradient in the temporary folder
+  * Copy all result files back to the directory where it was called
+  * Delete the temporary folder
+* After calculation is complete, reads from the `.engrad` file and returns the gradient to O1NH
