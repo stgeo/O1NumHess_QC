@@ -231,7 +231,7 @@ class O1NumHess_QC:
             self.hessian = self.runO1NumHess(delta=delta, core=core, total_cores=total_cores,\
                 o1nh=o1nh, config="BDF", dmax=dmax, has_g0=has_g0, transinvar=transinvar, rotinvar=rotinvar)
         else:
-            raise ValueError(f"method {method} is not supported, only supported 'single' and 'double'")
+            raise ValueError(f"method {method} is not supported, only supported 'single', 'double' and 'o1numhess'")
         return self.hessian
 
     def runO1NumHess(self,
@@ -249,6 +249,11 @@ class O1NumHess_QC:
         Prepare all the pre-requisites of o1nh.O1NumHess, and call it.
         """
         from .Swart import Swart
+
+        # We do not permit utilizing rotational invariance without utilizing translational
+        # invariance
+        if rotinvar and not transinvar:
+            raise ValueError('rotinvar==True and transinvar==False is not permitted')
 
         N = self.xyz_bohr.shape[0]
         # Special case: for a single atom, and if translational invariance is present,
@@ -268,10 +273,26 @@ class O1NumHess_QC:
 
         # effective distance matrix. Note that this is not simply the matrix of Cartesian
         # distances, but is rather Cartesian distances minus sum of vdW radii
+        if self.verbosity > 1:
+            print('Evaluate effective distance matrix...')
+            tstart = time.time()
+
         distmat = self._effDistMat
 
+        if self.verbosity > 1:
+            tend = time.time()
+            print('Effective distance matrix done, total time: %.2f sec'%(tend-tstart))
+
         # modified Swart model Hessian
+        if self.verbosity > 1:
+            print('Evaluate Swart Hessian...')
+            tstart = time.time()
+
         H0 = Swart(self.xyz_bohr, self.atomic_num)
+
+        if self.verbosity > 1:
+            tend = time.time()
+            print('Swart Hessian done, total time: %.2f sec'%(tend-tstart))
 
         # the following displacement directions should be included regardless of the molecule:
         # (1) translations and rotations
@@ -280,21 +301,30 @@ class O1NumHess_QC:
         # prepare the first Ntr displacement directions
         # Ntr = 5 (for linear molecules) or 6 (for nonlinear molecules)
         displdir[:,0:6], Ntr = vecTransRot(self.xyz_bohr)
+        if not rotinvar:
+            Ntr = 3
+        if not transinvar:
+            Ntr = 0
         # prepare the symmetric breathing mode
         displdir[:,Ntr] = symmetricBreathing(self.xyz_bohr)
-        if Ntr==5:
-            displdir = displdir[:,0:6]
+        displdir = displdir[:,0:(Ntr+1)]
 
         # Get the gradient of the unperturbed geometry, if there is one
         if has_g0:
+            if self.verbosity > 1:
+                print('Gradient at equilibrium geometry will be read from disk')
             if config == "BDF":
-                inp = getAbsPath(o1nh.inp)
+                inp = getAbsPath(o1nh.kwargs["inp"])
                 task_name = inp.stem
                 egrad1_in_path = getAbsPath(f"{task_name}.egrad1")
-                g0 = readEgrad1(egrad1_in_path, o1nh.encoding)
+                _, g0 = self._readEgrad1(egrad1_in_path)
+                g0 = g0.reshape((self.xyz_bohr.size,))
             else:
                 raise Exception('Unsupported config: %s'%config)
         else:
+            if self.verbosity > 1:
+                print('Evaluate gradient at equilibrium geometry...')
+                tstart = time.time()
             # do a gradient calculation at the unperturbed geometry
             if total_cores == None:
                 total_cores0 = os.cpu_count()
@@ -305,6 +335,12 @@ class O1NumHess_QC:
             # Use 6*N as the index, to avoid clashing with the calculations of
             # displaced geometries
             g0 = o1nh.grad_func(self.xyz_bohr,6*N,total_cores0,**o1nh.kwargs)
+            if self.verbosity > 1:
+                tend = time.time()
+                print('Gradient done, total time: %.2f sec'%(tend-tstart))
+                if self.verbosity > 5:
+                    print('Gradient at the equilibrium geometry:')
+                    print(g0)
 
         # The gradients along the translational and rotational directions
         # Note: g are not the gradients themselves, but are
@@ -313,7 +349,11 @@ class O1NumHess_QC:
         g = np.zeros([3*N,Ntr])
         # The gradients along the rotational directions are not zero when the geometry
         # is not an equilibrium geometry. We now account for this fact
-        g[:,3:Ntr] = rotationGradient(self.xyz_bohr,g0,Ntr-3)
+        if rotinvar:
+            g[:,3:Ntr] = rotationGradient(self.xyz_bohr,g0,Ntr-3)
+        if self.verbosity > 5:
+            print('Gradient derivatives along the trans/rot directions:')
+            print(g)
 
         # The only double-sided differentiation is along the symmetric breathing mode
         doublesided = np.zeros(3*N, dtype = bool)
@@ -322,31 +362,56 @@ class O1NumHess_QC:
 
         # finally, the actual calculation
         # (1) Initial Hessian
-        if self.verbosity > 2:
+        if self.verbosity > 1:
             print("Stage 1: Initial estimation of the Hessian")
-        self.hessian, displdir, gout = o1nh.O1NumHess(core=core, delta=delta, dmax=dmax, distmat=distmat, \
+            tstart = time.time()
+
+        self.hessian, displdir, gout = o1nh.O1NumHess(core=core, delta=delta,\
+            total_cores=total_cores, dmax=dmax, distmat=distmat, \
             H0=H0, displdir=displdir, g=g, g0=g0, doublesided=doublesided)
 
+        if self.verbosity > 1:
+            tend = time.time()
+            print('Stage 1 done, total time: %.2f sec'%(tend-tstart))
+
         # (2) Check if there are imaginary modes
-        if self.verbosity > 2:
+        if self.verbosity > 1:
             print("Stage 2: Check imaginary modes")
+            tstart = time.time()
+
         eigval, eigvec = np.linalg.eig(self.hessian)
+
         # append all imaginary modes (if there are any) to displdir
         Nimag = np.sum(eigval<-self.thresh_imag)
-        if self.verbosity > 2:
+        if self.verbosity > 1:
             print(" - %d imaginary mode(s) found"%Nimag)
+            if self.verbosity > 5:
+                print("Negative eigenvalues of the Hessian:")
+                print(eigval[eigval<-self.thresh_imag])
+            tend = time.time()
+            print('Stage 2 done, total time: %.2f sec'%(tend-tstart))
+        if Nimag>3*N-displdir.shape[1]:
+            # There are more imaginary frequencies than the number of remaining displacements.
+            # In this case we only displace along the modes with the most negative eigenvalues.
+            Nimag = 3*N-displdir.shape[1]
 
         # (3) Run O1NumHess again, with the imaginary modes added to the list of displacements
         if Nimag>0:
-            if self.verbosity > 2:
+            if self.verbosity > 1:
                 print("Stage 3: Displace along the imaginary modes")
-            displdir = np.hstack(displdir, eigvec[:,eigval<-self.thresh_imag])
-            g = np.hstack(g, gout)
+            # We use the property that eigval is sorted in ascending order.
+            displdir = np.hstack((displdir, eigvec[:,0:Nimag]))
             self.hessian, _, __ = o1nh.O1NumHess(core=core, delta=delta, \
                 total_cores=total_cores, dmax=dmax, distmat=distmat, \
-                H0=H0, displdir=displdir, g=g, g0=g0, doublesided=doublesided)
+                H0=H0, displdir=displdir, g=gout, g0=g0, doublesided=doublesided)
+            if self.verbosity > 1:
+                tend = time.time()
+                print('Stage 3 done, total time: %.2f sec'%(tend-tstart))
+        else:
+            if self.verbosity > 1:
+                print("Skip stage 3 as there are no further displacements to be made")
 
-        if self.verbosity > 2:
+        if self.verbosity > 1:
             print("Exit runO1NumHess")
         return self.hessian
 
@@ -379,6 +444,8 @@ class O1NumHess_QC:
             print(" - Number of cores used in the calculation: %d"%core)
             print(" - Maximum memory per core: %s"%mem)
             print("")
+            tstart = time.time()
+
         # ========== check params
         _ = getConfig("BDF", config_name)
 
@@ -390,7 +457,7 @@ class O1NumHess_QC:
             os.makedirs(tempdir, exist_ok=True)
 
         # ========== interface with O1NH
-        return self._O1NH(
+        hessian = self._O1NH(
             grad_func=self._calcGrad_BDF,
             method=method,
             delta=delta,
@@ -411,6 +478,13 @@ class O1NumHess_QC:
                 "config_name": config_name,
             }
         )
+
+        if self.verbosity > 1:
+            tend = time.time()
+            print('BDF numerical Hessian done, total time: %.2f sec'%(tend-tstart))
+            print('calcHessian_BDF terminated successfully')
+
+        return hessian
 
     def _calcGrad_BDF(
         self,
@@ -438,7 +512,6 @@ class O1NumHess_QC:
         # in parallel runs, the printout of different processes will mess up with each other
         if self.verbosity > 4:
             print("Start calculating gradient %d"%index)
-            print("")
             tstart = time.time()
 
         # ========== check params
