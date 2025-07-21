@@ -708,6 +708,12 @@ class O1NumHess_QC:
         task_name: str = "",
         config_name: str = "",
     ) -> np.ndarray:
+        # we do not recommend going to such high verbosity, except for serial runs
+        # in parallel runs, the printout of different processes will mess up with each other
+        if self.verbosity > 4:
+            print("Start calculating gradient %d"%index)
+            tstart = time.time()
+
         # ========== check params
         config = getConfig("ORCA", config_name)
         assert 0 < core and isinstance(core, int) # <= os.cpu_count()
@@ -791,7 +797,21 @@ class O1NumHess_QC:
         os.system(f"bash {sh_out_path}")
 
         # ========== read result
-        _, grad = self._readEngrad(engrad_in_path)
+        energy, grad = self._readEngrad(engrad_in_path)
         assert grad.size == self.xyz_bohr.size, f"the grad size from ORCA output .engrad file: {engrad_in_path} is {grad.size}, different with the initial molecular shape {self.xyz_bohr.size}"
+
+        # we do not recommend going to such high verbosity, except for serial runs
+        # in parallel runs, the printout of different processes will mess up with each other
+        if self.verbosity > 4:
+            print("Finished calculating gradient %d"%index)
+            print("Energy: %.12f Hartree"%energy)
+            print("Gradients in Hartree/Bohr:")
+            n_atoms = len(self.atoms)
+            for iatom in range(n_atoms):
+                print("%5s %20.12f %20.12f %20.12f"%(self.atoms[iatom], grad[iatom,0], grad[iatom,1], grad[iatom,2]))
+            tend = time.time()
+            print("Total time: %.2f sec"%(tend-tstart)) # type: ignore
+            print("")
+
         return grad.reshape((self.xyz_bohr.size,))
 
