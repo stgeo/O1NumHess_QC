@@ -313,14 +313,17 @@ class O1NumHess_QC:
         if has_g0:
             if self.verbosity > 1:
                 print('Gradient at equilibrium geometry will be read from disk')
+            inp = getAbsPath(o1nh.kwargs["inp"])
+            task_name = inp.stem
             if config == "BDF":
-                inp = getAbsPath(o1nh.kwargs["inp"])
-                task_name = inp.stem
                 egrad1_in_path = getAbsPath(f"{task_name}.egrad1")
                 _, g0 = self._readEgrad1(egrad1_in_path)
-                g0 = g0.reshape((self.xyz_bohr.size,))
+            elif config == "ORCA":
+                engrad_in_path = getAbsPath(f"{task_name}.engrad")
+                _, g0 = self._readEngrad(engrad_in_path)
             else:
                 raise Exception('Unsupported config: %s'%config)
+            g0 = g0.reshape((self.xyz_bohr.size,))
         else:
             if self.verbosity > 1:
                 print('Evaluate gradient at equilibrium geometry...')
@@ -436,7 +439,7 @@ class O1NumHess_QC:
         """
         TODO 备注：单位直接从inp文件中读取，无需传入
         """
-        if self.verbosity > 2:
+        if self.verbosity > 1:
             print("Start calculating numerical Hessian (BDF)...")
             print("Parameters:")
             print(" - Method: %s"%method)
@@ -623,10 +626,25 @@ class O1NumHess_QC:
         tempdir: Union[Path, str] = "~/tmp",
         task_name: str = "",
         config_name: str = "",
+        dmax: float = 1.0,
+        thresh_imag: float = 1e-8,
+        has_g0: bool = False,
+        transinvar: bool = True,
+        rotinvar: bool = True,
     ) -> np.ndarray:
         """
         并行的core参数写在inp文件里
         """
+        if self.verbosity > 1:
+            print("Start calculating numerical Hessian (ORCA)...")
+            print("Parameters:")
+            print(" - Method: %s"%method)
+            print(" - Step length: %e Bohr"%delta)
+            print(" - Number of cores used in the calculation: %d"%core)
+            print(" - Maximum memory per core: %s"%mem)
+            print("")
+            tstart = time.time()
+
         # ========== check params
         _ = getConfig("ORCA", config_name)
 
@@ -651,12 +669,18 @@ class O1NumHess_QC:
             raise ValueError(f"inp file {inp} does not contain parameter 'EnGrad', cannot calculate gradient in ORCA")
 
         # ========== interface with O1NH
-        return self._O1NH(
+        hessian = self._O1NH(
             grad_func=self._calcGrad_ORCA,
             method=method,
             delta=delta,
             core=core,
             total_cores=total_cores,
+            dmax=dmax,
+            thresh_imag=thresh_imag,
+            has_g0=has_g0,
+            transinvar=transinvar,
+            rotinvar=rotinvar,
+            verbosity=self.verbosity,
             **{
                 "inp": inp,
                 "encoding": encoding,
@@ -665,6 +689,13 @@ class O1NumHess_QC:
                 "config_name": config_name,
             }
         )
+
+        if self.verbosity > 1:
+            tend = time.time()
+            print('ORCA numerical Hessian done, total time: %.2f sec'%(tend-tstart))
+            print('calcHessian_ORCA terminated successfully')
+
+        return hessian
 
     def _calcGrad_ORCA(
         self,
