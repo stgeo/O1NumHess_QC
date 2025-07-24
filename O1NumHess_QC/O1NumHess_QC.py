@@ -536,8 +536,8 @@ class O1NumHess_QC:
         # ========== generate filename for BDF files
         # print(Path("."))
         suffix = str(index).zfill(len(str(x_bohr.size * 2))) # use index and x.size to generate a suffix with proper length
-        task_name = f"{task_name}_{suffix}"
-        tempdir = tempdir / task_name
+        task_name = f"{task_name}_{suffix}"     # name for current task instance
+        tempdir = tempdir / task_name           # make tempdir for current task instance
         xyz_out_path = getAbsPath(f"{task_name}.xyz")
         inp_out_path = getAbsPath(f"{task_name}.inp")
         sh_out_path = getAbsPath(f"{task_name}.sh")
@@ -635,16 +635,6 @@ class O1NumHess_QC:
         """
         并行的core参数写在inp文件里
         """
-        if self.verbosity > 1:
-            print("Start calculating numerical Hessian (ORCA)...")
-            print("Parameters:")
-            print(" - Method: %s"%method)
-            print(" - Step length: %e Bohr"%delta)
-            print(" - Number of cores used in the calculation: %d"%core)
-            print(" - Maximum memory per core: %s"%mem)
-            print("")
-            tstart = time.time()
-
         # ========== check params
         _ = getConfig("ORCA", config_name)
 
@@ -667,6 +657,16 @@ class O1NumHess_QC:
         # ========== make sure gradient is calculated in ORCA
         if re.search(r"^\s*!.*?EnGrad", inp_str, re.MULTILINE | re.IGNORECASE) is None:
             raise ValueError(f"inp file {inp} does not contain parameter 'EnGrad', cannot calculate gradient in ORCA")
+
+        if self.verbosity > 1:
+            print("Start calculating numerical Hessian (ORCA)...")
+            print("Parameters:")
+            print(" - Method: %s"%method)
+            print(" - Step length: %e Bohr"%delta)
+            print(" - Number of cores used in the calculation: %d"%core)
+            # print(" - Maximum memory per core: %s"%mem) # TODO 提前读取配置文件并得到信息
+            print("")
+            tstart = time.time()
 
         # ========== interface with O1NH
         hessian = self._O1NH(
@@ -716,7 +716,7 @@ class O1NumHess_QC:
 
         # ========== check params
         config = getConfig("ORCA", config_name)
-        assert 0 < core and isinstance(core, int) # <= os.cpu_count()
+        assert 0 < core and isinstance(core, int)
         inp = getAbsPath(inp)
         if not inp.is_file():
             raise FileNotFoundError(f"input .inp file: {inp} not exists or not a file")
@@ -734,8 +734,8 @@ class O1NumHess_QC:
         # print(Path("."))
         cwd = getAbsPath(".")
         suffix = str(index).zfill(len(str(x_bohr.size * 2))) # use index and x.size to generate a suffix with proper length
-        task_name = f"{task_name}_{suffix}"
-        tempdir = tempdir / task_name
+        task_name = f"{task_name}_{suffix}"     # name for current task instance
+        tempdir = tempdir / task_name           # make tempdir for current task instance
         xyz_out_path = getAbsPath(f"{task_name}.xyz")
         inp_out_path = getAbsPath(f"{task_name}.inp")
         sh_out_path = getAbsPath(f"{task_name}.sh")
@@ -744,43 +744,69 @@ class O1NumHess_QC:
         # ========== generate new .inp file for ORCA
         inp_str = inp.read_text(encoding)
 
+        # remove comments in inp file
+        inp_str = re.sub(r"#.*?#", "", inp_str, flags=re.MULTILINE)
+        inp_str = re.sub(r"#.*?$\n", "", inp_str, flags=re.MULTILINE)
+
         # make sure to calculate gradient in ORCA
         if re.search(r"^\s*!.*?EnGrad", inp_str, re.MULTILINE | re.IGNORECASE) is None:
             raise ValueError(f"inp file {inp} does not contain parameter 'EnGrad', cannot calculate gradient in ORCA")
 
         # find "pal" and replace with current core
-        match = re.search(r"^\s*!.*?PAL(\d+)|^\s*%\s*pal\s*nprocs\s*(\d+)", inp_str, re.MULTILINE | re.IGNORECASE)
-        if match is None:
+        pattern1 = r"(^\s*!.*?PAL)(\d+)"
+        pattern2 = r"(^\s*%\s*pal\s*nprocs\s*)(\d+)"
+        if re.search(pattern1, inp_str, re.MULTILINE | re.IGNORECASE) is None and re.search(pattern2, inp_str, re.MULTILINE | re.IGNORECASE) is None:
             raise ValueError(f"inp file {inp} does not contain parallel information like 'PAL' or '%pal nprocs'")
-        pal1 = r"(^\s*!.*?PAL)(\d+)"
-        pal2 = r"(^\s*%\s*pal\s*nprocs\s*)(\d+)"
-        inp_str = re.sub(pal1, rf"\g<1>{core}", inp_str, flags=re.MULTILINE | re.IGNORECASE) # replace PAL
-        inp_str = re.sub(pal2, rf"\g<1>{core}", inp_str, flags=re.MULTILINE | re.IGNORECASE) # replace nprocs
+        inp_str = re.sub(pattern1, rf"\g<1>{core}", inp_str, flags=re.MULTILINE | re.IGNORECASE) # replace PAL
+        inp_str = re.sub(pattern2, rf"\g<1>{core}", inp_str, flags=re.MULTILINE | re.IGNORECASE) # replace nprocs
         # print(inp_str)
 
-        # find "unit"
+        # find "unit", line like: ! xxxxxx Bohrs
         useBohr = True if re.search(r"^\s*!.*?Bohrs", inp_str, re.MULTILINE | re.IGNORECASE) else False
 
         # find and replace the .xyz file line
-        # TODO regex improve
-        if re.search(r"(^\s*\*\s*xyzfile\s*\d+\s*\d+\s*)(.+\.xyz)", inp_str, re.MULTILINE | re.IGNORECASE) is None:
+        pattern = r"(^\s*\*\s*xyzfile\s*\d+\s*\d+\s*)(.+\.xyz)"
+        if re.search(pattern, inp_str, re.MULTILINE | re.IGNORECASE) is None:
             raise ValueError(f"inp file {inp} does not contain molecular coordinate information, coordinates must be specified by xyzfile format")
-        inp_str = re.sub(r"(^\s*\*\s*xyzfile\s*\d+\s*\d+\s*)(.+\.xyz)", rf"\g<1>{xyz_out_path.name}", inp_str, flags=re.MULTILINE | re.IGNORECASE)
+        inp_str = re.sub(pattern, rf"\g<1>{xyz_out_path.name}", inp_str, flags=re.MULTILINE | re.IGNORECASE)
         # print(inp_str)
 
         # output file
         inp_out_path.write_text(inp_str, encoding=encoding)
 
+        # ========== deal with .gbw files
+        gbw_str_list = []
+        home_dir = inp.parent # find gwb files at the folder of inp file
+        # 1. file with the same name of inp file will be copy as task_name.gbw
+        gbw_in_path = getAbsPath(home_dir / f"{inp.stem}.gbw")
+        gbw_out_path = getAbsPath(tempdir / f"{task_name}.gbw")
+        if gbw_in_path.is_file():
+            gbw_str_list.append(f"cp {gbw_in_path} {gbw_out_path}")
+
+        # 2. %moinp "file.xxx" and "xxx.gbw" will be copied
+        files2copy = set()
+        files2copy.update(re.findall(r'"(.*?\.gbw)"', inp_str, flags=re.MULTILINE | re.IGNORECASE))
+        files2copy.update(re.findall(r'^\s*%moinp\s*"(.*?)"', inp_str, flags=re.MULTILINE | re.IGNORECASE))
+        # print(files2copy)
+        for file in files2copy:
+            path = getAbsPath(home_dir / file)
+            if not path.is_file():
+                raise FileNotFoundError(f"gbw file: {path} not exists.")
+            gbw_str_list.append(f"cp {path} {tempdir}")
+
+        gbw_str = "\n".join(gbw_str_list)
+
         # ========== generate new .xyz file for ORCA
         self._writeXYZ(x_bohr.reshape(x_bohr.size // 3, 3), self.atoms, xyz_out_path, useBohr)
 
-        print(f"{tempdir}")
+        # print(f"{tempdir}")
         # ========== generate new .sh file to run ORCA
         sh_out_path.write_text(config["bash"] + \
             dedent(f"""
             mkdir {tempdir}
             cp {inp_out_path} {tempdir}
             cp {xyz_out_path} {tempdir}
+            {{gbw_str}}
 
             cd {tempdir}
             {config["path"]} {inp_out_path.name} >& {task_name}.out
@@ -790,7 +816,7 @@ class O1NumHess_QC:
 
             rm -rf {tempdir}
             """
-        ), "utf-8")
+        ).format(gbw_str=gbw_str), "utf-8")
         # cd to tempdir, calculate, del non-result file, copy the rest result file back
 
         # ========== calculate
